@@ -63,10 +63,10 @@ export function parseCsv(text: string): CsvRecord[] {
       startLine = line;
     } else if (char === '"' && cell === "" && !closed) quoted = true;
     else if (closed || char === '"')
-      throw new CsvParseError("第 {{line}} 行 CSV 引号格式不正确。", line);
+      throw new CsvParseError(`第 ${line} 行 CSV 引号格式不正确。`, line);
     else cell += char;
   }
-  if (quoted) throw new CsvParseError("第 {{line}} 行 CSV 引号未闭合。", startLine);
+  if (quoted) throw new CsvParseError(`第 ${startLine} 行 CSV 引号未闭合。`, startLine);
   if (cell || cells.length || closed) finishRow();
   return records;
 }

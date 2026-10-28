@@ -123,7 +123,7 @@ export async function parseStatement(
     try {
       resourceData.set(
         name,
-        new Uint8Array(await (await assets.getBlob(`assets/pdf/${name}`)).arrayBuffer()),
+        new Uint8Array(await (await assets.getBlob(`dist/assets/pdf/${name}`)).arrayBuffer()),
       );
     } catch {
       throw new StatementError("resource");

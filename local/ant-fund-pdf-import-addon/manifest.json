@@ -1,8 +1,8 @@
 {
   "id": "ant-fund-pdf-import-addon",
-  "name": "Ant Fund PDF Import",
-  "version": "0.1.1",
-  "description": "Import Ant Fund transaction statements locally with a review before saving.",
+  "name": "蚂蚁基金 PDF 导入",
+  "version": "0.1.2",
+  "description": "本地解析蚂蚁基金交易明细，核对后交由 Wealthfolio 审核并导入。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
   "sdkVersion": "3.11.0",
@@ -19,7 +19,7 @@
         {
           "id": "ant-fund-pdf-import",
           "route": "ant-fund-pdf-import",
-          "label": "蚂蚁基金 PDF / Ant Fund PDF",
+          "label": "蚂蚁基金 PDF 导入",
           "icon": "receipt",
           "order": 220
         }
@@ -36,12 +36,12 @@
     {
       "category": "accounts",
       "functions": ["getAll"],
-      "purpose": "Select an existing CNY investment account."
+      "purpose": "选择已有的人民币投资账户。"
     },
     {
       "category": "activities",
       "functions": ["openImport"],
-      "purpose": "Open the host import wizard with locally parsed drafts; the host reviews and saves."
+      "purpose": "将本地解析的草稿交给宿主导入向导，审核确认后保存。"
     }
   ]
 }

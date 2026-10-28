@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
-import { useAddonTranslation } from "@wealthfolio/addon-sdk";
-import { CsvParseError } from "../parsers/csv";
 import {
-  AlertFeedback,
   ImportWizardLayout,
   FileDropzone,
   WizardStepIndicator,
   StepNavigation,
   CancelConfirmationDialog,
   ImportResultSummary,
+  ImportStatusCards,
+} from "@wealthfolio/import-wizard-ui";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
+import {
+  AlertFeedback,
   DataGrid,
   useDataGrid,
   useDirection,
@@ -54,15 +55,18 @@ const labels: Record<PreviewStatus, string> = {
   error: "错误",
 };
 const statusAppearance = {
-  ready: { variant: "success-subtle", icon: Icons.CheckCircle },
-  duplicate: { variant: "info-subtle", icon: Icons.Copy },
-  excluded: { variant: "outline", icon: Icons.MinusCircle },
-  review: { variant: "warning-subtle", icon: Icons.AlertCircle },
-  error: { variant: "destructive-subtle", icon: Icons.XCircle },
+  ready: { tone: "success", variant: "success-subtle", icon: Icons.CheckCircle },
+  duplicate: { tone: "info", variant: "info-subtle", icon: Icons.Copy },
+  excluded: { tone: "muted", variant: "outline", icon: Icons.MinusCircle },
+  review: { tone: "warning", variant: "warning-subtle", icon: Icons.AlertCircle },
+  error: { tone: "error", variant: "destructive-subtle", icon: Icons.XCircle },
 } as const;
 const kinds: Record<EntryKind, string> = { expense: "支出", income: "收入", refund: "支出退款" };
 const accountTypes: Record<Account["accountType"], string> = {
-  CASH: "现金", CREDIT_CARD: "信用卡", SECURITIES: "证券", CRYPTOCURRENCY: "加密货币",
+  CASH: "现金",
+  CREDIT_CARD: "信用卡",
+  SECURITIES: "证券",
+  CRYPTOCURRENCY: "加密货币",
 };
 
 function Choice({
@@ -78,20 +82,23 @@ function Choice({
   onChange(value: string): void;
   disabled?: boolean;
 }) {
-  const { t } = useAddonTranslation();
   return (
     <Select
       value={value || "__none__"}
       onValueChange={(next) => onChange(next === "__none__" ? "" : (next ?? ""))}
       disabled={disabled}
     >
-      <SelectTrigger aria-label={t(label)} className="h-8 w-full min-w-32 rounded-md text-xs">
+      <SelectTrigger
+        aria-label={label}
+        title={options.find((option) => option.value === value)?.label}
+        className="h-8 w-full min-w-0 py-1 text-xs"
+      >
         <SelectValue>
-          {options.find((option) => option.value === value)?.label ?? t("请选择")}
+          {options.find((option) => option.value === value)?.label ?? "请选择"}
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">{t("请选择")}</SelectItem>
+        <SelectItem value="__none__">{"请选择"}</SelectItem>
         {options.map((option) => (
           <SelectItem key={option.value} value={option.value}>
             {option.label}
@@ -103,7 +110,6 @@ function Choice({
 }
 
 export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
-  const { t } = useAddonTranslation();
   const { formatAmount } = useAmountFormatting();
   const { formatDecimal } = useNumberFormatting();
   const { formatDateTime } = useDateFormatting();
@@ -114,8 +120,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [submission, setSubmission] = useState<Awaited<
     ReturnType<ReturnType<typeof createSubmitter>>
   > | null>(null);
-  const [errorLine, setErrorLine] = useState<number>();
-  const [messageValues, setMessageValues] = useState<Record<string, number>>({});
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activities, setActivities] = useState<ExistingActivity[]>([]);
   const [statement, setStatement] = useState<StatementDocument | null>(null);
@@ -164,12 +168,13 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
 
   const accountOptions = accounts.map((account) => ({
     value: account.id,
-    label: `${account.name} · ${t(accountTypes[account.accountType])} · ${account.currency}`,
+    label: `${account.name} · ${accountTypes[account.accountType]} · ${account.currency}`,
   }));
   const evaluated = useMemo(() => {
     try {
       return {
-        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions), error: "",
+        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions),
+        error: "",
       };
     } catch (cause) {
       return {
@@ -203,7 +208,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
 
   async function upload(file: File) {
     setFile(file);
-    setErrorLine(undefined);
     setBusy(true);
     setError("");
     setMessage("");
@@ -215,7 +219,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       setStep("mapping");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "账单读取失败。");
-      setErrorLine(cause instanceof CsvParseError ? cause.lineNumber : undefined);
     } finally {
       setBusy(false);
     }
@@ -232,11 +235,13 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       }
       await ctx.api.storage.set(MAPPING_KEY, JSON.stringify(nextMappings));
       setMappings(nextMappings);
-      setMappingChoices(Object.fromEntries(
-        [...accountResolutions]
-          .filter(([, resolution]) => !resolution.accountId)
-          .map(([method]) => [method, ""]),
-      ));
+      setMappingChoices(
+        Object.fromEntries(
+          [...accountResolutions]
+            .filter(([, resolution]) => !resolution.accountId)
+            .map(([method]) => [method, ""]),
+        ),
+      );
       setStep("preview");
       setMessage("");
     } catch {
@@ -256,7 +261,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       const result = await submitter(rows, effectiveMappings, decisions, preview);
       setSubmission(result);
       setMessage(result.message);
-      setMessageValues(result.messageValues ?? {});
       const [currentAccounts, currentActivities] = await Promise.all([
         ctx.api.accounts.getAll(),
         ctx.api.activities.getAll(),
@@ -346,25 +350,26 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       ).map((key, index) => ({
         id: "source-" + key,
         header: () =>
-          t(
-            [
-              "交易时间",
-              "交易对方",
-              "商品说明",
-              "来源分类",
-              "收/支",
-              "付款方式",
-              "交易状态",
-              "订单号",
-              "原金额",
-            ][index],
-          ),
+          [
+            "交易时间",
+            "交易对方",
+            "商品说明",
+            "来源分类",
+            "收/支",
+            "付款方式",
+            "交易状态",
+            "订单号",
+            "原金额",
+          ][index],
         accessorFn: (entry: PreviewRow) => entry.row.source[key],
         cell: ({ row }: { row: { original: PreviewRow } }) => {
           const source = row.original.row.source;
           const value = source[key];
           return (
-            <span title={String(value)}>
+            <span
+              className="block truncate leading-8"
+              title={key === "date" ? source.originalTime : String(value)}
+            >
               {key === "date" && value
                 ? formatDateTime(value, { dateStyle: "short", timeStyle: "short" })
                 : key === "amount"
@@ -377,26 +382,28 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       })),
       {
         id: "kind",
-        header: () => t("记账性质"),
+        header: () => "记账性质",
         size: 150,
         cell: ({ row }: { row: { original: PreviewRow } }) => (
-          <Choice
-            label={t("第 {{line}} 行性质", { line: n(row.original.row.source.lineNumber) })}
-            value={row.original.kind ?? ""}
-            options={Object.entries(kinds).map(([value, label]) => ({ value, label: t(label) }))}
-            disabled={locked(row.original)}
-            onChange={(kind) =>
-              changeDecision(row.original.row.source.lineNumber, {
-                kind: kind ? (kind as EntryKind) : undefined,
-              })
-            }
-          />
+          <div className="flex h-full items-center">
+            <Choice
+              label={`第 ${n(row.original.row.source.lineNumber)} 行性质`}
+              value={row.original.kind ?? ""}
+              options={Object.entries(kinds).map(([value, label]) => ({ value, label: label }))}
+              disabled={locked(row.original)}
+              onChange={(kind) =>
+                changeDecision(row.original.row.source.lineNumber, {
+                  kind: kind ? (kind as EntryKind) : undefined,
+                })
+              }
+            />
+          </div>
         ),
       },
       {
         id: "amount",
         accessorKey: "amount",
-        header: t("确认金额"),
+        header: "确认金额",
         size: 150,
         meta: {
           readOnly: locked,
@@ -411,58 +418,64 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       },
       {
         id: "accountId",
-        header: () => t("目标账户"),
+        header: () => "目标账户",
         size: 240,
         cell: ({ row }: { row: { original: PreviewRow } }) => (
-          <Choice
-            label={t("第 {{line}} 行账户", { line: n(row.original.row.source.lineNumber) })}
-            value={row.original.accountId}
-            options={accountOptions}
-            disabled={locked(row.original)}
-            onChange={(accountId) =>
-              changeDecision(row.original.row.source.lineNumber, { accountId })
-            }
-          />
+          <div className="flex h-full items-center">
+            <Choice
+              label={`第 ${n(row.original.row.source.lineNumber)} 行账户`}
+              value={row.original.accountId}
+              options={accountOptions}
+              disabled={locked(row.original)}
+              onChange={(accountId) =>
+                changeDecision(row.original.row.source.lineNumber, { accountId })
+              }
+            />
+          </div>
         ),
       },
       {
         id: "processing",
-        header: () => t("处理状态"),
+        header: () => "处理状态",
         size: 320,
         cell: ({ row }: { row: { original: PreviewRow } }) => {
           const entry = row.original;
           const appearance = statusAppearance[entry.status];
           const Icon = appearance.icon;
           return (
-            <div className="flex items-center gap-2" title={t(entry.reason)}>
-              <Badge variant={appearance.variant} data-processing-status={entry.status}>
+            <div className="flex h-full min-w-0 items-center gap-2" title={entry.reason}>
+              <Badge
+                className="shrink-0"
+                variant={appearance.variant}
+                data-processing-status={entry.status}
+              >
                 <Icon className="me-1 size-3" />
-                {t(labels[entry.status])}
+                {labels[entry.status]}
               </Badge>
-              <span className="truncate">{t(entry.reason)}</span>
+              <span className="truncate">{entry.reason}</span>
             </div>
           );
         },
       },
       {
         id: "actions",
-        header: () => t("操作"),
+        header: () => "操作",
         size: 220,
         cell: ({ row }: { row: { original: PreviewRow } }) => {
           const entry = row.original;
           const source = entry.row.source;
           const decision = decisions[source.lineNumber] ?? {};
           return (
-            <div className="flex gap-3">
+            <div className="flex h-full items-center gap-3">
               {!entry.row.excluded && entry.status !== "duplicate" && (
                 <label className="flex items-center gap-1">
                   <Checkbox
-                    aria-label={t("第 {{line}} 行排除", { line: n(source.lineNumber) })}
+                    aria-label={`第 ${n(source.lineNumber)} 行排除`}
                     disabled={busy}
                     checked={!!decision.excluded}
                     onCheckedChange={(excluded) => changeDecision(source.lineNumber, { excluded })}
                   />
-                  {t("排除")}
+                  {"排除"}
                 </label>
               )}
               {entry.row.reviewReason &&
@@ -471,14 +484,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 !decision.excluded && (
                   <label className="flex items-center gap-1">
                     <Checkbox
-                      aria-label={t("第 {{line}} 行确认", { line: n(source.lineNumber) })}
+                      aria-label={`第 ${n(source.lineNumber)} 行确认`}
                       disabled={busy || !entry.kind || !entry.accountId || !entry.amount}
                       checked={!!decision.confirmed}
                       onCheckedChange={(confirmed) =>
                         changeDecision(source.lineNumber, { confirmed })
                       }
                     />
-                    {t("确认")}
+                    {"确认"}
                   </label>
                 )}
             </div>
@@ -486,10 +499,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
         },
       },
     ],
-    [t, busy, decisions, accountOptions, formatAmount, formatDateTime],
+    [busy, decisions, accountOptions, formatAmount, formatDateTime],
   );
   const grid = useDataGrid({
     data: gridRows,
+    rowHeight: "medium",
     columns,
     getRowId: (entry) => String(entry.line),
     dir,
@@ -506,15 +520,20 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     },
   });
   const steps = [
-    { id: "upload", label: t(parser?.uploadLabelKey ?? "上传账单") },
-    { id: "mapping", label: t("账户映射") },
-    { id: "preview", label: t("逐笔预览") },
-    { id: "confirm", label: t("提交确认") },
+    { id: "upload", label: parser?.uploadLabel ?? "上传账单" },
+    { id: "mapping", label: "账户映射" },
+    { id: "preview", label: "逐笔预览" },
+    { id: "confirm", label: "提交确认" },
   ];
-  const statistics = Object.entries(labels).map(([status, label]) => ({
-    label: t(label),
-    value: n(counts[status] ?? 0),
-  }));
+  const statistics = (Object.keys(labels) as PreviewStatus[]).map((status) => {
+    const { tone, icon: Icon } = statusAppearance[status];
+    return {
+      label: labels[status],
+      value: n(counts[status] ?? 0),
+      tone,
+      icon: <Icon className="size-4" />,
+    };
+  });
   function back() {
     if (step === "confirm") setStep("preview");
     else if (step === "preview") setStep("mapping");
@@ -531,14 +550,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     <div className="statement-import h-dvh min-h-0">
       <Page className="flex h-full min-h-0 flex-col">
         <PageHeader
-          heading={t("账单导入")}
+          heading={"账单导入"}
           actions={
             <div className="flex gap-2">
               <Button variant="outline" disabled={busy} onClick={() => void refresh()}>
-                {t("刷新核对")}
+                {"刷新核对"}
               </Button>
               <Button variant="ghost" disabled={busy || !file} onClick={() => setConfirmOpen(true)}>
-                {t("结束 / 取消本次导入")}
+                {"结束 / 取消本次导入"}
               </Button>
             </div>
           }
@@ -550,7 +569,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
           <div className="h-full min-h-0 px-2 pt-2 pb-6 sm:px-4 sm:pt-4 md:px-6 md:pt-6">
             <ImportWizardLayout
               isResult={step === "result"}
-              steps={<WizardStepIndicator label={t("导入进度")} steps={steps} currentStep={step} />}
+              steps={<WizardStepIndicator label={"导入进度"} steps={steps} currentStep={step} />}
               navigation={
                 step !== "result" ? (
                   <StepNavigation
@@ -566,34 +585,26 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     }
                     nextLabel={
                       step === "confirm"
-                        ? t("确认仅导入已就绪 {{count}} 笔", { count: n(counts.ready) })
+                        ? `确认仅导入已就绪 ${n(counts.ready)} 笔`
                         : step === "mapping"
-                          ? t("保存映射并预览")
-                          : t("提交确认")
+                          ? "保存映射并预览"
+                          : "提交确认"
                     }
-                    nextLoadingLabel={t("正在核对并保存…")}
-                    backLabel={step === "preview" ? t("返回账户映射") : t("上一步")}
+                    nextLoadingLabel={"正在核对并保存…"}
+                    backLabel={step === "preview" ? "返回账户映射" : "上一步"}
                     isNextLoading={busy}
                   />
                 ) : undefined
               }
             >
               {(error || evaluated.error) && (
-                <AlertFeedback variant="error" title={t("错误")} role="alert">
-                  {t(
-                    error || evaluated.error,
-                    errorLine === undefined ? {} : { line: n(errorLine) },
-                  )}
+                <AlertFeedback variant="error" title={"错误"} role="alert">
+                  {error || evaluated.error}
                 </AlertFeedback>
               )}
               {message && step !== "result" && (
-                <AlertFeedback variant="warning" title={t("核对提示")}>
-                  {t(
-                    message,
-                    Object.fromEntries(
-                      Object.entries(messageValues).map(([key, value]) => [key, n(value)]),
-                    ),
-                  )}
+                <AlertFeedback variant="warning" title={"核对提示"}>
+                  {message}
                 </AlertFeedback>
               )}
               {step === "upload" && (
@@ -606,64 +617,91 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     }}
                     isLoading={busy || !loaded}
                     accept={[...new Set(statementParsers.flatMap((candidate) => candidate.formats))]
-                      .map((format) => `.${format}`).join(",")}
+                      .map((format) => `.${format}`)
+                      .join(",")}
                     error={error}
                     labels={{
-                      choose: t("选择账单文件"),
-                      remove: t("移除文件"),
-                      processing: t("正在读取账单…"),
-                      drop: t("或拖拽文件"),
-                      hint: statementParsers.map((candidate) => t(candidate.fileHintKey)).join(" · "),
+                      choose: "选择账单文件",
+                      remove: "移除文件",
+                      processing: "正在读取账单…",
+                      drop: "或拖拽文件",
+                      hint: statementParsers.map((candidate) => candidate.fileHint).join(" · "),
                     }}
                   />
                   <p className="text-muted-foreground text-sm">
-                    {t("原文件只在本地读取，预览确认后才会保存账目。")}
+                    {"原文件只在本地读取，预览确认后才会保存账目。"}
                   </p>
                 </div>
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
                   {parser && (
-                    <AlertFeedback variant="warning" title={`${t(parser.displayNameKey)} · ${t("映射实际资金账户")}`}>
-                      {t(parser.mappingHintKey, { count: n(rows.length) })}
+                    <AlertFeedback
+                      variant="warning"
+                      title={`${parser.displayName} · ${"映射实际资金账户"}`}
+                    >
+                      {parser.mappingHint(n(rows.length))}
                     </AlertFeedback>
                   )}
                   {!accounts.length && (
-                    <AlertFeedback variant="warning" title={t("待确认")}>
-                      {t("没有可选择的账户，请先在主程序创建账户。")}
+                    <AlertFeedback variant="warning" title={"待确认"}>
+                      {"没有可选择的账户，请先在主程序创建账户。"}
                     </AlertFeedback>
                   )}
                   {paymentMethods.map((method) => {
                     const resolution = accountResolutions.get(method)!;
-                    const candidateIds = resolution.candidates.map((candidate) => candidate.accountId);
+                    const candidateIds = resolution.candidates.map(
+                      (candidate) => candidate.accountId,
+                    );
                     const options = [
                       ...candidateIds,
-                      ...accountOptions.map((option) => option.value).filter((id) => !candidateIds.includes(id)),
+                      ...accountOptions
+                        .map((option) => option.value)
+                        .filter((id) => !candidateIds.includes(id)),
                     ].map((id) => accountOptions.find((option) => option.value === id)!);
-                    const origin = !resolution.accountId ? "待选择"
-                      : Object.hasOwn(mappingChoices, method) ? "人工选择"
-                      : resolution.origin === "saved" ? "已保存" : "自动识别";
+                    const origin = !resolution.accountId
+                      ? "待选择"
+                      : Object.hasOwn(mappingChoices, method)
+                        ? "人工选择"
+                        : resolution.origin === "saved"
+                          ? "已保存"
+                          : "自动识别";
                     return (
                       <div key={method} className="grid items-start gap-3 sm:grid-cols-2">
                         <span>
-                          {method || t("未提供付款方式（请指定收款账户）")}{" "}
-                          <Badge variant="outline">{t(origin)}</Badge>
+                          {method || "未提供付款方式（请指定收款账户）"}{" "}
+                          <Badge variant="outline">{origin}</Badge>
                         </span>
                         <div className="space-y-2">
                           <Choice
-                            label={t("账户映射：{{method}}", { method })}
+                            label={`账户映射：${method}`}
                             value={resolution.accountId}
                             options={options}
                             disabled={busy}
-                            onChange={(id) => setMappingChoices((current) => ({ ...current, [method]: id }))}
+                            onChange={(id) =>
+                              setMappingChoices((current) => ({ ...current, [method]: id }))
+                            }
                           />
                           {resolution.candidates.length > 0 && (
-                            <ul aria-label={t("推荐账户")} className="text-muted-foreground space-y-1 text-xs">
+                            <ul
+                              aria-label={"推荐账户"}
+                              className="text-muted-foreground space-y-1 text-xs"
+                            >
                               {resolution.candidates.map((candidate) => (
                                 <li key={candidate.accountId}>
-                                  {accountOptions.find((option) => option.value === candidate.accountId)!.label}{" · "}
-                                  {t(candidate.confidence === "high" ? "高置信" : candidate.confidence === "medium" ? "中置信" : "低置信")}{" · "}
-                                  {candidate.reasons.map((reason) => t(reason)).join(" · ")}
+                                  {
+                                    accountOptions.find(
+                                      (option) => option.value === candidate.accountId,
+                                    )!.label
+                                  }
+                                  {" · "}
+                                  {candidate.confidence === "high"
+                                    ? "高置信"
+                                    : candidate.confidence === "medium"
+                                      ? "中置信"
+                                      : "低置信"}
+                                  {" · "}
+                                  {candidate.reasons.map((reason) => reason).join(" · ")}
                                 </li>
                               ))}
                             </ul>
@@ -673,37 +711,42 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     );
                   })}
                   <Button variant="outline" disabled={busy} onClick={() => void resetMappings()}>
-                    {t("重置映射")}
+                    {"重置映射"}
                   </Button>
                 </div>
               )}
               {(step === "preview" || step === "confirm") && (
                 <div className="space-y-4">
-                  <dl className="flex flex-wrap gap-6">
-                    {statistics.map(({ label, value }) => (
-                      <div key={label}>
-                        <dt className="text-muted-foreground text-sm">{label}</dt>
-                        <dd className="text-xl tabular-nums">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <AlertFeedback variant="warning" title={t("提交确认")}>
-                    {t(
-                      "仅提交已就绪记录。不计收支、组合支付及未知状态需逐笔确认性质、实际金额和账户；转账、还款、理财请排除。本版保留来源分类，不自动分配系统分类。",
-                    )}
+                  <ImportStatusCards items={statistics} />
+                  <AlertFeedback variant="warning" title={"提交确认"}>
+                    {
+                      "仅提交已就绪记录。不计收支、组合支付及未知状态需逐笔确认性质、实际金额和账户；转账、还款、理财请排除。本版保留来源分类，不自动分配系统分类。"
+                    }
                   </AlertFeedback>
-                  {step === "preview" && <DataGrid {...grid} dir={dir} height={440} />}
+                  {step === "preview" && (
+                    <DataGrid
+                      {...grid}
+                      dir={dir}
+                      height={440}
+                      className="import-wizard-grid"
+                      style={
+                        {
+                          "--import-wizard-grid-width": `${grid.table.getTotalSize()}px`,
+                        } as CSSProperties
+                      }
+                    />
+                  )}
                 </div>
               )}
               {step === "result" && submission && (
                 <ImportResultSummary
-                  title={t(
+                  title={
                     submission.outcome === "success"
                       ? "导入完成"
                       : submission.outcome === "partial"
                         ? "部分完成"
-                        : "结果待核对",
-                  )}
+                        : "结果待核对"
+                  }
                   outcome={
                     submission.outcome === "success"
                       ? "success"
@@ -711,19 +754,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                         ? "partial"
                         : "uncertain"
                   }
-                  description={t(
-                    submission.message,
-                    Object.fromEntries(
-                      Object.entries(submission.messageValues ?? {}).map(([key, value]) => [
-                        key,
-                        n(value),
-                      ]),
-                    ),
-                  )}
+                  description={submission.message}
                   statistics={[
-                    { label: t("本次确认新增"), value: n(submission.created) },
+                    { label: "本次确认新增", value: n(submission.created) },
                     {
-                      label: t(submission.outcome === "uncertain" ? "待确认" : "未提交"),
+                      label: submission.outcome === "uncertain" ? "待确认" : "未提交",
                       value: n(submission.unconfirmed ?? rows.length - submission.created),
                     },
                   ]}
@@ -735,15 +770,13 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       setMessage("");
                     }}
                   >
-                    {t("返回预览")}
+                    {"返回预览"}
                   </Button>
-                  <Button onClick={cancel}>{t("开始新导入")}</Button>
+                  <Button onClick={cancel}>{"开始新导入"}</Button>
                 </ImportResultSummary>
               )}
               <p className="text-muted-foreground mt-3 text-xs">
-                {t(
-                  "重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。",
-                )}
+                {"重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。"}
               </p>
             </ImportWizardLayout>
           </div>
@@ -752,10 +785,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
           onConfirm={cancel}
-          title={t("放弃本次导入？")}
-          description={t("将清除已上传账单和未提交的修改。")}
-          continueLabel={t("继续编辑")}
-          cancelLabel={t("取消本次导入")}
+          title={"放弃本次导入？"}
+          description={"将清除已上传账单和未提交的修改。"}
+          continueLabel={"继续编辑"}
+          cancelLabel={"取消本次导入"}
         />
       </Page>
     </div>

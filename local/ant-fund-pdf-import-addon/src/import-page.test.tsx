@@ -1,22 +1,11 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { FormattingProvider, DirectionProvider, useLocalizationSettings } from "@wealthfolio/ui";
+import { FormattingProvider, DirectionProvider } from "@wealthfolio/ui";
 import type { AddonContext } from "@wealthfolio/addon-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AntFundImportPage } from "./import-page";
 import { parseStatement, type StatementRow } from "./statement";
-import { en, zh, zhHant } from "./messages";
-
-vi.mock("@wealthfolio/addon-sdk", async (original) => ({
-  ...(await original<typeof import("@wealthfolio/addon-sdk")>()),
-  useAddonTranslation: () => {
-    const { uiLocale } = useLocalizationSettings();
-    const messages = uiLocale === "zh-Hant" ? zhHant : uiLocale === "zh" ? zh : en;
-    return { t: (key: keyof typeof en) => messages[key], language: uiLocale };
-  },
-}));
-
 vi.mock("./statement", async (original) => ({
   ...(await original<typeof import("./statement")>()),
   parseStatement: vi.fn(),
@@ -147,9 +136,9 @@ describe("PDF preparation UI", () => {
     vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
     await mount(ctx, true);
     await upload();
-    await select("CNY investment account", "Test CNY");
+    await select("人民币投资账户", "Test CNY");
     expect(setLeaveGuard).toHaveBeenCalledWith(true);
-    await click("Next step");
+    await click("下一步");
     expect(openImport).toHaveBeenCalledWith(
       expect.objectContaining({
         sourceLabel: "synthetic.pdf",
@@ -168,9 +157,9 @@ describe("PDF preparation UI", () => {
     vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
     await mount(ctx);
     await upload();
-    await click("Cancel");
-    await click("Continue editing", document.querySelector('[role="alertdialog"]')!);
-    expect(container.textContent).toContain("Correct statement-specific fields");
+    await click("取消");
+    await click("继续编辑", document.querySelector('[role="alertdialog"]')!);
+    expect(container.textContent).toContain("在此修正原始交易");
     expect(openImport).not.toHaveBeenCalled();
   });
   it("retains preparation after a failed handoff and allows retry", async () => {
@@ -179,10 +168,10 @@ describe("PDF preparation UI", () => {
     openImport.mockRejectedValueOnce(new Error("failed"));
     await mount(ctx);
     await upload();
-    await select("CNY investment account", "Test CNY");
-    await click("Next step");
-    expect(container.textContent).toContain("Operation failed");
-    await click("Next step");
+    await select("人民币投资账户", "Test CNY");
+    await click("下一步");
+    expect(container.textContent).toContain("操作失败");
+    await click("下一步");
     expect(openImport).toHaveBeenCalledTimes(2);
   });
 });

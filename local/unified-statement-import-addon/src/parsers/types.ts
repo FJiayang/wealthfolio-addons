@@ -30,11 +30,11 @@ export interface StatementRow {
 
 export interface StatementParser {
   id: string;
-  displayNameKey: string;
+  displayName: string;
   formats: readonly string[];
-  uploadLabelKey: string;
-  fileHintKey: string;
-  mappingHintKey: string;
+  uploadLabel: string;
+  fileHint: string;
+  mappingHint(count: string): string;
   recordIdLabel: string;
   matches(headers: readonly string[]): boolean;
   parse(records: CsvRecord[], fileName: string): StatementRow[];
