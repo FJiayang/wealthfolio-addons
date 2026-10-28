@@ -8,15 +8,6 @@ export interface AccountCandidate {
   reasons: string[];
 }
 
-export function eligibleAccounts(accounts: Account[]): Account[] {
-  return accounts.filter(
-    (account) =>
-      account.isActive && !account.isArchived && account.currency === "CNY" &&
-      (account.accountType === "CASH" || account.accountType === "CREDIT_CARD") &&
-      account.trackingMode !== "HOLDINGS",
-  );
-}
-
 export function normalizeInstrument(value: string): { base: string; suffix?: string } {
   const normalized = value.normalize("NFKC").toLowerCase().trim();
   const tail = normalized.match(
@@ -28,12 +19,6 @@ export function normalizeInstrument(value: string): { base: string; suffix?: str
   return { base: name.replace(/[\s\p{P}\p{S}]/gu, ""), suffix };
 }
 
-function paymentAccountType(base: string): Account["accountType"] | undefined {
-  const credit = /信用卡|贷记卡|花呗|白条|分付/.test(base);
-  const cash = /储蓄卡|借记卡|账户余额|余额|零钱|余额宝/.test(base);
-  return credit === cash ? undefined : credit ? "CREDIT_CARD" : "CASH";
-}
-
 const genericNames = new Set(["信用卡", "贷记卡", "储蓄卡", "借记卡", "银行卡", "余额", "账户余额", "零钱"]);
 
 export function inferAccount(paymentMethod: string, accounts: Account[]): {
@@ -41,10 +26,8 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
   accountId?: string;
 } {
   const method = normalizeInstrument(paymentMethod);
-  const type = paymentAccountType(method.base);
   const candidates: AccountCandidate[] = [];
-  for (const account of eligibleAccounts(accounts)) {
-    if (type && type !== account.accountType) continue;
+  for (const account of accounts) {
     const name = normalizeInstrument(account.name);
     const number = normalizeInstrument(account.accountNumber ?? "");
     const conflictingIdentity = Boolean(name.suffix && number.suffix && name.suffix !== number.suffix);
@@ -58,7 +41,7 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
       method.base && name.base &&
       (method.base.includes(name.base) || name.base.includes(method.base)),
     );
-    if (!sameSuffix && !contains) continue;
+    if (!contains) continue;
     let score = 0;
     const reasons: string[] = [];
     if (sameSuffix) {
@@ -78,15 +61,11 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
       score += 10;
       reasons.push("名称部分匹配");
     }
-    if (type) {
-      score += 20;
-      reasons.push("账户类型一致");
-    }
     if (conflictingIdentity) reasons.push("账户名与账号尾号不一致");
     const specificName = !genericNames.has(name.base);
     const high = !conflictingIdentity && (
-      (sameSuffix && Boolean(type)) || (sameName && specificName) ||
-      (accountPrefix && specificName && name.base.length >= 4 && Boolean(type))
+      sameSuffix || (sameName && specificName) ||
+      (accountPrefix && specificName && name.base.length >= 4)
     );
     candidates.push({
       accountId: account.id,
@@ -104,7 +83,7 @@ export function resolveAccount(paymentMethod: string, accounts: Account[], mappi
   const inference = inferAccount(paymentMethod, accounts);
   const mapped = Object.hasOwn(mappings, paymentMethod);
   const accountId = mapped ? mappings[paymentMethod] : inference.accountId ?? "";
-  const available = eligibleAccounts(accounts).some((account) => account.id === accountId);
+  const available = accounts.some((account) => account.id === accountId);
   return {
     candidates: inference.candidates,
     accountId: available ? accountId : "",

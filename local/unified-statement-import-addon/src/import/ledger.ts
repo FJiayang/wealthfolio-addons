@@ -2,8 +2,7 @@ import type { Account, Activity, ActivityCreate } from "@wealthfolio/addon-sdk";
 import { normalizeAmount } from "../parsers/csv";
 import type { EntryKind, StatementRow, StatementSource } from "../parsers/types";
 import { getStatementParser } from "../parsers";
-import { eligibleAccounts, resolveAccount, type Mappings } from "./account-matching";
-export { eligibleAccounts } from "./account-matching";
+import { resolveAccount, type Mappings } from "./account-matching";
 export type { Mappings } from "./account-matching";
 
 export const METADATA_KEY = "unifiedStatementImport";
@@ -33,9 +32,9 @@ export function restoreMappings(value: string | null, accounts: Account[]): Mapp
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     throw new Error("账户映射配置格式不正确，请重置映射。");
-  const eligible = new Set(eligibleAccounts(accounts).map((account) => account.id));
+  const available = new Set(accounts.map((account) => account.id));
   return Object.fromEntries(
-    Object.entries(parsed).filter(([, id]) => typeof id === "string" && eligible.has(id)),
+    Object.entries(parsed).filter(([, id]) => typeof id === "string" && available.has(id)),
   );
 }
 
@@ -101,7 +100,7 @@ export function buildPreview(
   mappings: Mappings,
   decisions: Decisions,
 ): PreviewRow[] {
-  const accountsById = new Map(eligibleAccounts(accounts).map((account) => [account.id, account]));
+  const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const existing = new Map<string, { id: string; source: StatementSource }[]>();
   for (const activity of activities) {
     for (const source of readSources(activity)) {
@@ -154,9 +153,7 @@ export function buildPreview(
     if (row.reviewReason && !decision.confirmed) return result("review", row.reviewReason);
     if (!kind) return result("review", "请选择收入、支出或退款");
     const account = accountsById.get(accountId);
-    if (!account) return result("review", "请选择可用的 CNY 现金或信用卡账户");
-    if (kind === "income" && account.accountType === "CREDIT_CARD")
-      return result("review", "普通收入须选择现金账户；还款暂不支持");
+    if (!account) return result("review", "请选择账户");
     try {
       amount = normalizeAmount(amount);
     } catch {

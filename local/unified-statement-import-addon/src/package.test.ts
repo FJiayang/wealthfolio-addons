@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 
 it("安装包只有运行文件和说明，没有源账单、测试及商店元数据", () => {
   const files = unzipSync(
-    readFileSync(new URL("../dist/unified-statement-import-addon-0.1.1.zip", import.meta.url)),
+    readFileSync(new URL("../dist/unified-statement-import-addon-0.1.2.zip", import.meta.url)),
   );
   const names = Object.keys(files);
   expect(names).toEqual(

@@ -1,7 +1,7 @@
 {
   "id": "unified-statement-import-addon",
   "name": "账单导入 / Statement Import",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "本地解析支付宝账单，预览、映射账户并检测重复后保存。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
@@ -29,7 +29,7 @@
     "react-dom": "^19.2.0"
   },
   "permissions": [
-    { "category": "accounts", "functions": ["getAll"], "purpose": "选择已有现金或信用卡账户。" },
+    { "category": "accounts", "functions": ["getAll"], "purpose": "按名称推荐并选择已有账户。" },
     {
       "category": "activities",
       "functions": ["getAll", "saveMany"],

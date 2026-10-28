@@ -19,12 +19,12 @@ describe("账户推断", () => {
     expect(normalizeInstrument(input!)).toEqual({ base, suffix });
   });
 
-  it("尾号和类型一致唯一时自动预填，金额日期不参与账户推断", () => {
+  it("名称和尾号一致唯一时自动预填，金额日期不参与账户推断", () => {
     const result = inferAccount("招商银行信用卡(1234)", [card, { ...card, id: "other", accountNumber: "5678" }]);
     expect(result.accountId).toBe("card");
     expect(result.candidates).toEqual([expect.objectContaining({
-      accountId: "card", confidence: "high", score: 200,
-      reasons: ["卡尾号一致", "账户名称完全一致", "账户类型一致"],
+      accountId: "card", confidence: "high", score: 180,
+      reasons: ["卡尾号一致", "账户名称完全一致"],
     })]);
   });
 
@@ -35,7 +35,7 @@ describe("账户推断", () => {
     ]);
     expect(result.accountId).toBe("card");
     expect(result.candidates.map(({ confidence, score }) => [confidence, score])).toEqual([
-      ["high", 64], ["medium", 47],
+      ["high", 44], ["medium", 27],
     ]);
   });
 
@@ -53,9 +53,9 @@ describe("账户推断", () => {
     }
   });
 
-  it("非泛化名称完全一致可预填，尾号单独匹配没有类型仅低置信", () => {
+  it("非泛化名称完全一致可预填，仅尾号一致但名称不匹配不召回", () => {
     expect(inferAccount("日常钱包", [{ ...account(), name: "日常钱包" }]).accountId).toBe("cash");
-    expect(inferAccount("其他银行 (1234)", [card])).toMatchObject({ candidates: [{ confidence: "low" }] });
+    expect(inferAccount("其他银行 (1234)", [card]).candidates).toEqual([]);
     expect(inferAccount("其他银行 (1234)", [card]).accountId).toBeUndefined();
   });
 
@@ -65,21 +65,20 @@ describe("账户推断", () => {
     expect(result.candidates[0].reasons).toContain("账户名与账号尾号不一致");
   });
 
-  it("过滤尾号、账户类型冲突和所有不可用账户", () => {
-    const unavailable = [
+  it("名称匹配不受账户类型、币种、持仓模式或账户状态限制", () => {
+    const variants = [
       { ...card, isActive: false }, { ...card, isArchived: true }, { ...card, currency: "USD" },
       { ...card, trackingMode: "HOLDINGS" as const }, { ...card, accountType: "SECURITIES" as const },
-      { ...card, accountNumber: "5678" }, { ...card, accountType: "CASH" as const },
+      { ...card, accountType: "CASH" as const },
+      { ...card, accountType: "CRYPTOCURRENCY" as const },
     ];
-    expect(inferAccount("招商银行信用卡(1234)", unavailable).candidates).toEqual([]);
-    for (const method of ["储蓄卡", "借记卡", "账户余额", "余额", "零钱", "余额宝"]) {
-      expect(inferAccount(method, [{ ...card, name: method }]).candidates).toEqual([]);
+    for (const variant of variants) {
+      expect(inferAccount("招商银行信用卡(1234)", [variant]).accountId).toBe("card");
+      expect(resolveAccount("未知名称", [variant], { 未知名称: "card" }).accountId).toBe("card");
     }
-    for (const method of ["信用卡", "贷记卡", "花呗", "白条", "分付"]) {
-      expect(inferAccount(method, [{ ...account(), name: method }]).candidates).toEqual([]);
-    }
+    expect(inferAccount("余额宝", [{ ...account(), name: "余额宝", trackingMode: "HOLDINGS" }]).accountId).toBe("cash");
+    expect(inferAccount("招商银行信用卡(1234)", [{ ...card, accountNumber: "5678" }]).candidates).toEqual([]);
     expect(inferAccount("", [card]).candidates).toEqual([]);
-    expect(inferAccount("账户", [{ ...account(), name: "账户余额" }]).candidates[0].reasons).not.toContain("账户类型一致");
   });
 
   it("显式映射优先且不受推断类型约束；清空和失效映射不被推断覆盖", () => {

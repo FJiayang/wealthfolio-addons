@@ -34,7 +34,6 @@ import type { EntryKind, StatementDocument } from "../parsers/types";
 import { resolveAccount } from "../import/account-matching";
 import {
   buildPreview,
-  eligibleAccounts,
   MAPPING_KEY,
   restoreMappings,
   type Decisions,
@@ -62,6 +61,9 @@ const statusAppearance = {
   error: { variant: "destructive-subtle", icon: Icons.XCircle },
 } as const;
 const kinds: Record<EntryKind, string> = { expense: "支出", income: "收入", refund: "支出退款" };
+const accountTypes: Record<Account["accountType"], string> = {
+  CASH: "现金", CREDIT_CARD: "信用卡", SECURITIES: "证券", CRYPTOCURRENCY: "加密货币",
+};
 
 function Choice({
   label,
@@ -160,10 +162,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     };
   }, [ctx]);
 
-  const available = eligibleAccounts(accounts);
-  const accountOptions = available.map((account) => ({
+  const accountOptions = accounts.map((account) => ({
     value: account.id,
-    label: `${account.name} · ${t(account.accountType === "CREDIT_CARD" ? "信用卡" : "现金")}`,
+    label: `${account.name} · ${t(accountTypes[account.accountType])} · ${account.currency}`,
   }));
   const evaluated = useMemo(() => {
     try {
@@ -627,9 +628,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       {t(parser.mappingHintKey, { count: n(rows.length) })}
                     </AlertFeedback>
                   )}
-                  {!available.length && (
+                  {!accounts.length && (
                     <AlertFeedback variant="warning" title={t("待确认")}>
-                      {t("没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。")}
+                      {t("没有可选择的账户，请先在主程序创建账户。")}
                     </AlertFeedback>
                   )}
                   {paymentMethods.map((method) => {

@@ -31,8 +31,6 @@ const en = {
   映射实际资金账户: "Map funding accounts",
   "已读取 {{count}} 条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。":
     "Rows read: {{count}}. Bank names and card suffixes are hints only. Choose the actual funding or receiving account. Yu'e Bao, Huabei and combined payments are not Alipay balance payments.",
-  "没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。":
-    "No eligible CNY cash or credit card account. Create an account in Wealthfolio first.",
   付款方式: "Payment method",
   目标账户: "Account",
   "未提供付款方式（请指定收款账户）": "No payment method (choose a receiving account)",
@@ -115,9 +113,6 @@ const en = {
   "此订单已经导入，保留现有账目": "Order already imported. Existing transaction preserved.",
   本批次已有相同订单: "Duplicate order in this batch",
   "请选择收入、支出或退款": "Choose income, expense or refund.",
-  "请选择可用的 CNY 现金或信用卡账户": "Choose an eligible CNY cash or credit card account.",
-  "普通收入须选择现金账户；还款暂不支持":
-    "Choose a cash account for income. Repayments are not supported yet.",
   确认金额格式不正确: "Invalid confirmed amount",
   零金额记录不提交: "Zero-amount rows are not submitted",
   已就绪: "Ready",
@@ -155,8 +150,6 @@ export const translations: AddonTranslationResources = {
     ...Object.fromEntries(Object.keys(en).map((key) => [key, key])),
     "已读取 {{count}} 条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。":
       "已讀取 {{count}} 筆明細。銀行卡名稱及尾號僅作提示，請選擇實際扣款或收款帳戶。餘額寶、花唄或組合付款不應直接當作支付寶餘額。",
-    "没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。":
-      "沒有可用的 CNY 現金或信用卡帳戶，請先在主程式建立帳戶。",
     "只记住付款方式与系统账户的映射；不会保存账单文件。未映射行不会提交。":
       "僅記住付款方式與系統帳戶的對應，不儲存帳單檔案。未對應的記錄不會提交。",
     "仅提交已就绪记录。不计收支、组合支付及未知状态需逐笔确认性质、实际金额和账户；转账、还款、理财请排除。本版保留来源分类，不自动分配系统分类。":
@@ -197,8 +190,6 @@ export const translations: AddonTranslationResources = {
     "此订单已经导入，保留现有账目": "此訂單已匯入，保留既有帳目",
     本批次已有相同订单: "本批次已有相同訂單",
     "请选择收入、支出或退款": "請選擇收入、支出或退款",
-    "请选择可用的 CNY 现金或信用卡账户": "請選擇可用的 CNY 現金或信用卡帳戶",
-    "普通收入须选择现金账户；还款暂不支持": "一般收入須選擇現金帳戶；暫不支援還款",
     确认金额格式不正确: "確認金額格式不正確",
     零金额记录不提交: "零金額記錄不提交",
     已就绪: "已就緒",
@@ -295,6 +286,10 @@ export const translations: AddonTranslationResources = {
 };
 
 const additions: Record<string, [string, string, string]> = {
+  证券: ["Securities", "证券", "證券"],
+  加密货币: ["Cryptocurrency", "加密货币", "加密貨幣"],
+  请选择账户: ["Choose an account", "请选择账户", "請選擇帳戶"],
+  "没有可选择的账户，请先在主程序创建账户。": ["No accounts to choose from. Create an account in Wealthfolio first.", "没有可选择的账户，请先在主程序创建账户。", "沒有可選擇的帳戶，請先在主程式建立帳戶。"],
   支付宝: ["Alipay", "支付宝", "支付寶"],
   上传账单: ["Upload a statement", "上传账单", "上傳帳單"],
   选择账单文件: ["Choose a statement file", "选择账单文件", "選擇帳單檔案"],
@@ -311,7 +306,6 @@ const additions: Record<string, [string, string, string]> = {
   账户名是付款方式前缀: ["Account name prefixes the payment method", "账户名是付款方式前缀", "帳戶名稱為付款方式前綴"],
   付款方式是账户名前缀: ["Payment method prefixes the account name", "付款方式是账户名前缀", "付款方式為帳戶名稱前綴"],
   名称部分匹配: ["Partially matching name", "名称部分匹配", "名稱部分相符"],
-  账户类型一致: ["Matching account type", "账户类型一致", "帳戶類型一致"],
   账户名与账号尾号不一致: ["Account name and number have different suffixes", "账户名与账号尾号不一致", "帳戶名稱與帳號尾號不一致"],
   "未注册的账单渠道。": ["Unregistered statement channel.", "未注册的账单渠道。", "未註冊的帳單渠道。"],
   "未识别到支持的账单表头，请检查文件格式及必需列。": ["Unsupported statement header. Check the file format and required columns.", "未识别到支持的账单表头，请检查文件格式及必需列。", "未辨識出支援的帳單表頭，請檢查檔案格式及必要欄位。"],

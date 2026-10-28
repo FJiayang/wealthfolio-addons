@@ -64,9 +64,9 @@ describe("SDK 提交", () => {
     expect((await submit(rows, mapping, {}, reviewed)).message).toContain("重新确认");
     expect(host.activities.saveMany).toHaveBeenCalledTimes(1);
   });
-  it("提交前账户变化会刷新预览并停止写入", async () => {
+  it("提交前账户已不存在会刷新预览并停止写入", async () => {
     const { host, submit, reviewed } = mockHost();
-    host.accounts.getAll.mockResolvedValue([{ ...account(), isActive: false }]);
+    host.accounts.getAll.mockResolvedValue([]);
     expect((await submit(rows, mapping, {}, reviewed)).preview[0].status).toBe("review");
     expect(host.activities.saveMany).not.toHaveBeenCalled();
   });

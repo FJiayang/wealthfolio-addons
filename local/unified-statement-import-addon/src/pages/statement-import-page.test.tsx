@@ -101,6 +101,44 @@ async function upload(lines = [csvRow(), csvRow({ id: "pending", direction: "不
 }
 
 describe("shared statement wizard", () => {
+  it("余额宝持仓账户按名称预填并可提交，来源仍以 CNY 入账", async () => {
+    const wallet = { ...account("yuebao"), name: "余额宝", trackingMode: "HOLDINGS" as const };
+    const { ctx, storage, stored } = context("{}", [wallet]);
+    await renderPage(ctx);
+    await upload([csvRow({ method: "余额宝" })]);
+    expect(container.querySelector('[aria-label="账户映射：余额宝"]')!.textContent).toContain("余额宝");
+    expect(container.textContent).toContain("自动识别");
+    await click("保存映射并预览");
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 余额宝: "yuebao" }));
+    await click("提交确认");
+    await click("确认仅导入已就绪 1 笔");
+    expect(stored[0]).toMatchObject({ accountId: "yuebao", activityType: "WITHDRAWAL", currency: "CNY", amount: "12.30" });
+  });
+
+  it("无名称候选时可从宿主返回的全部账户手动选择", async () => {
+    const accounts = [
+      { ...account("usd"), name: "美元账户", currency: "USD" },
+      { ...account("securities", "SECURITIES"), name: "投资账户", trackingMode: "HOLDINGS" as const },
+      { ...account("crypto", "CRYPTOCURRENCY"), name: "数字资产" },
+      { ...account("inactive"), name: "停用账户", isActive: false },
+      { ...account("archived"), name: "归档账户", isArchived: true },
+      account("card", "CREDIT_CARD"),
+    ];
+    const { ctx, stored } = context("{}", accounts);
+    await renderPage(ctx);
+    await upload([csvRow({ method: "无法识别的付款方式" })]);
+    expect(container.querySelector('[aria-label="推荐账户"]')).toBeNull();
+    const trigger = container.querySelector<HTMLElement>('[aria-label="账户映射：无法识别的付款方式"]')!;
+    await act(async () => trigger.click());
+    const options = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
+    for (const account of accounts) expect(options.some((option) => option.textContent?.includes(account.name))).toBe(true);
+    await act(async () => options.find((option) => option.textContent?.includes("投资账户"))!.click());
+    await click("保存映射并预览");
+    await click("提交确认");
+    await click("确认仅导入已就绪 1 笔");
+    expect(stored[0].accountId).toBe("securities");
+  });
+
   it("预填唯一高置信账户，展示理由，确认后保存并在下次上传复用", async () => {
     const method = "招商银行信用卡(1234)";
     const card = { ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" };
@@ -164,7 +202,7 @@ describe("shared statement wizard", () => {
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, "{}");
   });
 
-  it("保存映射优先于自动推断，账户归档后刷新清除有效选择", async () => {
+  it("保存映射优先于自动推断，账户已不存在时刷新清除有效选择", async () => {
     const method = "日常钱包";
     const wallet = { ...account(), name: method };
     const { ctx } = context(JSON.stringify({ [method]: "manual" }), [wallet, account("manual")]);
@@ -172,7 +210,7 @@ describe("shared statement wizard", () => {
     await upload([csvRow({ method })]);
     expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("manual");
     expect(container.textContent).toContain("已保存");
-    vi.mocked(ctx.api.accounts.getAll).mockResolvedValue([wallet, { ...account("manual"), isArchived: true }]);
+    vi.mocked(ctx.api.accounts.getAll).mockResolvedValue([wallet]);
     await click("刷新核对");
     expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("请选择");
     await click("保存映射并预览");
