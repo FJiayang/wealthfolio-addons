@@ -1,12 +1,20 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseStatement } from "./index";
+import { getStatementParser, parseStatement, statementParsers } from "./index";
 import { decodeStatement, normalizeAmount, parseCsv, parseShanghaiDate } from "./csv";
 import { csvRow, demoFixture, HEADER } from "../test-fixtures";
 
-const parse = (body: string) => parseStatement(new TextEncoder().encode(body), "fictional.csv");
+const parse = (body: string) => parseStatement(new TextEncoder().encode(body), "fictional.csv").rows;
 
 describe("支付宝解析", () => {
+  it("文档返回渠道身份，格式和界面提示由解析器注册表提供", () => {
+    const document = parseStatement(new TextEncoder().encode(`${HEADER}\n${csvRow()}`), "fixture.csv");
+    expect(document.parserId).toBe("alipay");
+    expect(getStatementParser(document.parserId)).toMatchObject({ formats: ["csv"], recordIdLabel: "支付宝订单号" });
+    expect(statementParsers).toHaveLength(1);
+    expect(() => getStatementParser("missing")).toThrow("未注册");
+  });
+
   it("按表头读取脱敏的 DEMO 结构，不采用说明区笔数", () => {
     const rows = parse(demoFixture());
     expect(rows).toHaveLength(52);
@@ -68,7 +76,7 @@ describe("支付宝解析", () => {
     expect(parse(`${HEADER}\n${csvRow()},多余列`)[0].error).toBeTruthy();
   });
   it.skipIf(!process.env.STATEMENT_DEMO_PATH)("只读验收用户 DEMO，不记录账单内容", () => {
-    const rows = parseStatement(readFileSync(process.env.STATEMENT_DEMO_PATH!), "DEMO.csv");
+    const rows = parseStatement(readFileSync(process.env.STATEMENT_DEMO_PATH!), "DEMO.csv").rows;
     expect(rows.length).toBe(52);
     expect(
       ["支出", "收入", "不计收支"].map(

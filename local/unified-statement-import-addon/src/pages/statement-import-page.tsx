@@ -29,8 +29,9 @@ import {
   useNumberFormatting,
   useDateFormatting,
 } from "@wealthfolio/ui";
-import { parseStatement } from "../parsers";
-import type { EntryKind, StatementRow } from "../parsers/types";
+import { getStatementParser, parseStatement, statementParsers } from "../parsers";
+import type { EntryKind, StatementDocument } from "../parsers/types";
+import { resolveAccount } from "../import/account-matching";
 import {
   buildPreview,
   eligibleAccounts,
@@ -115,8 +116,15 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [messageValues, setMessageValues] = useState<Record<string, number>>({});
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activities, setActivities] = useState<ExistingActivity[]>([]);
-  const [rows, setRows] = useState<StatementRow[]>([]);
+  const [statement, setStatement] = useState<StatementDocument | null>(null);
+  const rows = useMemo(() => statement?.rows ?? [], [statement]);
+  const parser = statement ? getStatementParser(statement.parserId) : undefined;
   const [mappings, setMappings] = useState<Mappings>({});
+  const [mappingChoices, setMappingChoices] = useState<Mappings>({});
+  const effectiveMappings = useMemo(
+    () => ({ ...mappings, ...mappingChoices }),
+    [mappings, mappingChoices],
+  );
   const [decisions, setDecisions] = useState<Decisions>({});
   const [step, setStep] = useState<ImportStep>("upload");
   const [busy, setBusy] = useState(false);
@@ -159,14 +167,16 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   }));
   const evaluated = useMemo(() => {
     try {
-      return { preview: buildPreview(rows, accounts, activities, mappings, decisions), error: "" };
+      return {
+        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions), error: "",
+      };
     } catch (cause) {
       return {
         preview: [] as PreviewRow[],
         error: cause instanceof Error ? cause.message : "来源信息无法读取。",
       };
     }
-  }, [rows, accounts, activities, mappings, decisions]);
+  }, [rows, accounts, activities, effectiveMappings, decisions]);
   const preview = evaluated.preview;
   const counts = Object.fromEntries(
     Object.keys(labels).map((status) => [
@@ -177,6 +187,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const paymentMethods = [
     ...new Set(rows.filter((row) => !row.excluded).map((row) => row.source.paymentMethod)),
   ];
+  const accountResolutions = new Map(
+    paymentMethods.map((method) => [method, resolveAccount(method, accounts, effectiveMappings)]),
+  );
 
   function changeDecision(line: number, patch: RowDecision) {
     if (step === "result") setStep("preview");
@@ -195,7 +208,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setMessage("");
     try {
       const parsed = parseStatement(new Uint8Array(await file.arrayBuffer()), file.name);
-      setRows(parsed);
+      setStatement(parsed);
+      setMappingChoices({});
       setDecisions({});
       setStep("mapping");
     } catch (cause) {
@@ -210,7 +224,18 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setBusy(true);
     setError("");
     try {
-      await ctx.api.storage.set(MAPPING_KEY, JSON.stringify(mappings));
+      const nextMappings = { ...effectiveMappings };
+      for (const [method, resolution] of accountResolutions) {
+        if (resolution.accountId) nextMappings[method] = resolution.accountId;
+        else delete nextMappings[method];
+      }
+      await ctx.api.storage.set(MAPPING_KEY, JSON.stringify(nextMappings));
+      setMappings(nextMappings);
+      setMappingChoices(Object.fromEntries(
+        [...accountResolutions]
+          .filter(([, resolution]) => !resolution.accountId)
+          .map(([method]) => [method, ""]),
+      ));
       setStep("preview");
       setMessage("");
     } catch {
@@ -227,7 +252,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setError("");
     setMessage("");
     try {
-      const result = await submitter(rows, mappings, decisions, preview);
+      const result = await submitter(rows, effectiveMappings, decisions, preview);
       setSubmission(result);
       setMessage(result.message);
       setMessageValues(result.messageValues ?? {});
@@ -271,6 +296,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     try {
       await ctx.api.storage.delete(MAPPING_KEY);
       setMappings({});
+      setMappingChoices(Object.fromEntries(paymentMethods.map((method) => [method, ""])));
       setError("");
       setMessage("已重置保存的账户映射。");
     } catch {
@@ -283,7 +309,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   function cancel() {
     setFile(null);
     setSubmission(null);
-    setRows([]);
+    setStatement(null);
+    setMappingChoices({});
     setDecisions({});
     setStep("upload");
     setError("");
@@ -478,7 +505,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     },
   });
   const steps = [
-    { id: "upload", label: t("上传支付宝交易明细") },
+    { id: "upload", label: t(parser?.uploadLabelKey ?? "上传账单") },
     { id: "mapping", label: t("账户映射") },
     { id: "preview", label: t("逐笔预览") },
     { id: "confirm", label: t("提交确认") },
@@ -577,14 +604,15 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       else if (nextFile) void upload(nextFile);
                     }}
                     isLoading={busy || !loaded}
-                    accept=".csv,text/csv"
+                    accept={[...new Set(statementParsers.flatMap((candidate) => candidate.formats))]
+                      .map((format) => `.${format}`).join(",")}
                     error={error}
                     labels={{
-                      choose: t("选择 CSV 文件"),
+                      choose: t("选择账单文件"),
                       remove: t("移除文件"),
                       processing: t("正在读取账单…"),
                       drop: t("或拖拽文件"),
-                      hint: t("支付宝交易明细 · UTF-8 / GB18030"),
+                      hint: statementParsers.map((candidate) => t(candidate.fileHintKey)).join(" · "),
                     }}
                   />
                   <p className="text-muted-foreground text-sm">
@@ -594,29 +622,55 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
-                  <AlertFeedback variant="warning" title={t("映射实际资金账户")}>
-                    {t(
-                      "已读取 {{count}} 条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。",
-                      { count: n(rows.length) },
-                    )}
-                  </AlertFeedback>
+                  {parser && (
+                    <AlertFeedback variant="warning" title={`${t(parser.displayNameKey)} · ${t("映射实际资金账户")}`}>
+                      {t(parser.mappingHintKey, { count: n(rows.length) })}
+                    </AlertFeedback>
+                  )}
                   {!available.length && (
                     <AlertFeedback variant="warning" title={t("待确认")}>
                       {t("没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。")}
                     </AlertFeedback>
                   )}
-                  {paymentMethods.map((method) => (
-                    <label key={method} className="grid items-center gap-3 sm:grid-cols-2">
-                      <span>{method || t("未提供付款方式（请指定收款账户）")}</span>
-                      <Choice
-                        label={t("账户映射：{{method}}", { method })}
-                        value={mappings[method] ?? ""}
-                        options={accountOptions}
-                        disabled={busy}
-                        onChange={(id) => setMappings((current) => ({ ...current, [method]: id }))}
-                      />
-                    </label>
-                  ))}
+                  {paymentMethods.map((method) => {
+                    const resolution = accountResolutions.get(method)!;
+                    const candidateIds = resolution.candidates.map((candidate) => candidate.accountId);
+                    const options = [
+                      ...candidateIds,
+                      ...accountOptions.map((option) => option.value).filter((id) => !candidateIds.includes(id)),
+                    ].map((id) => accountOptions.find((option) => option.value === id)!);
+                    const origin = !resolution.accountId ? "待选择"
+                      : Object.hasOwn(mappingChoices, method) ? "人工选择"
+                      : resolution.origin === "saved" ? "已保存" : "自动识别";
+                    return (
+                      <div key={method} className="grid items-start gap-3 sm:grid-cols-2">
+                        <span>
+                          {method || t("未提供付款方式（请指定收款账户）")}{" "}
+                          <Badge variant="outline">{t(origin)}</Badge>
+                        </span>
+                        <div className="space-y-2">
+                          <Choice
+                            label={t("账户映射：{{method}}", { method })}
+                            value={resolution.accountId}
+                            options={options}
+                            disabled={busy}
+                            onChange={(id) => setMappingChoices((current) => ({ ...current, [method]: id }))}
+                          />
+                          {resolution.candidates.length > 0 && (
+                            <ul aria-label={t("推荐账户")} className="text-muted-foreground space-y-1 text-xs">
+                              {resolution.candidates.map((candidate) => (
+                                <li key={candidate.accountId}>
+                                  {accountOptions.find((option) => option.value === candidate.accountId)!.label}{" · "}
+                                  {t(candidate.confidence === "high" ? "高置信" : candidate.confidence === "medium" ? "中置信" : "低置信")}{" · "}
+                                  {candidate.reasons.map((reason) => t(reason)).join(" · ")}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                   <Button variant="outline" disabled={busy} onClick={() => void resetMappings()}>
                     {t("重置映射")}
                   </Button>

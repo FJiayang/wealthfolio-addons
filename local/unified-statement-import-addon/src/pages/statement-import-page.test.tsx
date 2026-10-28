@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { AddonContext, Activity, ActivityBulkMutationRequest } from "@wealthfolio/addon-sdk";
+import type { Account, AddonContext, Activity, ActivityBulkMutationRequest } from "@wealthfolio/addon-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
@@ -57,13 +57,14 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  document.documentElement.dir = "ltr";
 });
 
-function context(saved = JSON.stringify({ 账户余额: "cash" })) {
+function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Account[] = [account()]) {
   const stored: Activity[] = [];
   const storage = {
     get: vi.fn(async () => saved),
-    set: vi.fn(async () => {}),
+    set: vi.fn(async (_key: string, value: string) => { saved = value; }),
     delete: vi.fn(async () => {}),
   };
   const saveMany = vi.fn(async ({ creates = [] }: ActivityBulkMutationRequest) => {
@@ -74,7 +75,7 @@ function context(saved = JSON.stringify({ 账户余额: "cash" })) {
   const ctx = {
     router: { setLeaveGuard: vi.fn(async () => {}) },
     api: {
-      accounts: { getAll: vi.fn(async () => [account()]) },
+      accounts: { getAll: vi.fn(async () => accounts) },
       activities: { getAll: vi.fn(async () => [...stored]), saveMany },
       storage,
     },
@@ -100,6 +101,84 @@ async function upload(lines = [csvRow(), csvRow({ id: "pending", direction: "不
 }
 
 describe("shared statement wizard", () => {
+  it("预填唯一高置信账户，展示理由，确认后保存并在下次上传复用", async () => {
+    const method = "招商银行信用卡(1234)";
+    const card = { ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" };
+    const { ctx, storage, saveMany } = context("{}", [card]);
+    await renderPage(ctx);
+    await upload([csvRow({ method })]);
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(card.name);
+    expect(container.textContent).toContain("自动识别");
+    expect(container.querySelector('[aria-label="推荐账户"]')!.textContent).toContain("卡尾号一致");
+    expect(storage.set).not.toHaveBeenCalled();
+    expect(saveMany).not.toHaveBeenCalled();
+    await renderPage(ctx, "en-US", "en");
+    expect(container.textContent).toContain("Automatically matched");
+    expect(container.textContent).toContain("Matching card suffix");
+    await renderPage(ctx, "zh-TW", "zh-Hant");
+    expect(container.textContent).toContain("自動識別");
+    expect(container.textContent).toContain("卡尾號一致");
+    await renderPage(ctx);
+    await click("保存映射并预览");
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ [method]: "card" }));
+    await click("提交确认");
+    await click("确认仅导入已就绪 1 笔");
+    await click("开始新导入");
+    await upload([csvRow({ method })]);
+    expect(container.textContent).toContain("已保存");
+    await click("保存映射并预览");
+    expect(saveMany).toHaveBeenCalledTimes(1);
+    expect(Array.from(container.querySelectorAll("dl > div")).find((item) => item.querySelector("dt")?.textContent === "重复")!.querySelector("dd")!.textContent).toBe("1");
+  });
+
+  it("多个高置信候选不自动选择，候选之外的人工选择仍可使用", async () => {
+    document.documentElement.dir = "rtl";
+    const method = "招商银行信用卡";
+    const card = { ...account("card", "CREDIT_CARD"), name: method };
+    const { ctx } = context("{}", [card, { ...card, id: "second" }, account()]);
+    await renderPage(ctx);
+    await upload([csvRow({ method })]);
+    const trigger = container.querySelector<HTMLElement>(`[aria-label="账户映射：${method}"]`)!;
+    expect(trigger.textContent).toContain("请选择");
+    expect(container.querySelectorAll('[aria-label="推荐账户"] li')).toHaveLength(2);
+    await act(async () => trigger.click());
+    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((item) => item.textContent?.includes("cash"))!;
+    await act(async () => option.click());
+    expect(trigger.textContent).toContain("cash");
+    expect(container.textContent).toContain("人工选择");
+  });
+
+  it("手动清空后刷新和保存不会重新填回", async () => {
+    const method = "日常钱包";
+    const wallet = { ...account(), name: method };
+    const { ctx, storage } = context("{}", [wallet]);
+    await renderPage(ctx);
+    await upload([csvRow({ method })]);
+    const trigger = container.querySelector<HTMLElement>(`[aria-label="账户映射：${method}"]`)!;
+    await act(async () => trigger.click());
+    const clear = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((item) => item.textContent === "请选择")!;
+    await act(async () => clear.click());
+    await click("刷新核对");
+    expect(trigger.textContent).toContain("请选择");
+    await click("保存映射并预览");
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, "{}");
+  });
+
+  it("保存映射优先于自动推断，账户归档后刷新清除有效选择", async () => {
+    const method = "日常钱包";
+    const wallet = { ...account(), name: method };
+    const { ctx } = context(JSON.stringify({ [method]: "manual" }), [wallet, account("manual")]);
+    await renderPage(ctx);
+    await upload([csvRow({ method })]);
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("manual");
+    expect(container.textContent).toContain("已保存");
+    vi.mocked(ctx.api.accounts.getAll).mockResolvedValue([wallet, { ...account("manual"), isArchived: true }]);
+    await click("刷新核对");
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("请选择");
+    await click("保存映射并预览");
+    expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("提交确认"))!.disabled).toBe(true);
+  });
+
   it("preserves uploaded rows across language and region changes and submits only after confirmation", async () => {
     const { ctx, stored, saveMany } = context();
     await renderPage(ctx);

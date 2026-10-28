@@ -4,11 +4,24 @@ import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { buildPreview, eligibleAccounts, METADATA_KEY, restoreMappings } from "./ledger";
 
 const rows = (...lines: string[]) =>
-  parseStatement(new TextEncoder().encode([HEADER, ...lines].join("\n")), "fictional.csv");
+  parseStatement(new TextEncoder().encode([HEADER, ...lines].join("\n")), "fictional.csv").rows;
 const cash = account();
 const mapping = { 账户余额: "cash" };
 
 describe("预览、来源和重复检测", () => {
+  it("推断与保存映射共用预览入口，逐行人工选择及清空优先", () => {
+    const method = "招商银行信用卡(1234)";
+    const parsed = rows(csvRow({ method }));
+    const accounts = [{ ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" }, cash];
+    expect(buildPreview(parsed, accounts, [], {}, {})[0]).toMatchObject({ status: "ready", accountId: "card" });
+    expect(buildPreview(parsed, accounts, [], { [method]: "cash" }, {})[0].accountId).toBe("cash");
+    expect(buildPreview(parsed, accounts, [], { [method]: "card" }, { 2: { accountId: "cash" } })[0].accountId).toBe("cash");
+    expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe("review");
+    for (const overrides of [{ status: "处理中" }, { method: `${method}&红包` }, { direction: "不计收支" }]) {
+      expect(buildPreview(rows(csvRow({ method, ...overrides })), accounts, [], {}, {})[0].status).toBe("review");
+    }
+  });
+
   it("创建备注及完整来源，精度和原始金额不受人工确认影响", () => {
     const parsed = rows(csvRow({ method: "信用卡&红包" }));
     const preview = buildPreview(

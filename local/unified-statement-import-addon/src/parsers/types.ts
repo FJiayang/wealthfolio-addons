@@ -30,8 +30,19 @@ export interface StatementRow {
 
 export interface StatementParser {
   id: string;
+  displayNameKey: string;
+  formats: readonly string[];
+  uploadLabelKey: string;
+  fileHintKey: string;
+  mappingHintKey: string;
+  recordIdLabel: string;
   matches(headers: readonly string[]): boolean;
   parse(records: CsvRecord[], fileName: string): StatementRow[];
+}
+
+export interface StatementDocument {
+  parserId: string;
+  rows: StatementRow[];
 }
 
 export interface CsvRecord {

@@ -15,6 +15,12 @@ const required = [
 
 export const alipayParser: StatementParser = {
   id: "alipay",
+  displayNameKey: "支付宝",
+  formats: ["csv"],
+  uploadLabelKey: "上传支付宝交易明细",
+  fileHintKey: "支付宝交易明细 · UTF-8 / GB18030",
+  mappingHintKey: "已读取 {{count}} 条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。",
+  recordIdLabel: "支付宝订单号",
   matches: (headers) => required.every((name) => headers.includes(name)),
   parse(records, fileName) {
     const headerIndex = records.findIndex(({ cells }) =>

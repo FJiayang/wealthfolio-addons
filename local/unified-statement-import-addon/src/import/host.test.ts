@@ -57,7 +57,7 @@ it.skipIf(!process.env.STATEMENT_TEST_ORIGIN)("隔离真实宿主保存来源并
   const rows = parseStatement(
     readFileSync(new URL("../fixtures/alipay-synthetic.csv", import.meta.url)),
     "synthetic.csv",
-  );
+  ).rows;
   const mappings = { 账户余额: accounts[0].id, "": accounts[0].id };
   const preview = buildPreview(rows, accounts, [], mappings, {});
   expect(preview.filter((entry) => entry.status === "ready")).toHaveLength(3);

@@ -16,7 +16,7 @@ const rows = parseStatement(
     [HEADER, csvRow(), csvRow({ id: "pending", direction: "不计收支" })].join("\n"),
   ),
   "fixture.csv",
-);
+).rows;
 
 function mockHost() {
   const stored: Activity[] = [];
@@ -42,6 +42,19 @@ function mockHost() {
 }
 
 describe("SDK 提交", () => {
+  it("提交时重新推断账户，新出现的高置信账户使旧预览失效", async () => {
+    const { host, submit } = mockHost();
+    const wallet = { ...account(), name: "日常钱包" };
+    const inferredRows = parseStatement(new TextEncoder().encode([HEADER, csvRow({ method: "日常钱包" })].join("\n")), "wallet.csv").rows;
+    const reviewed = buildPreview(inferredRows, [wallet], [], {}, {});
+    expect(reviewed[0].status).toBe("ready");
+    host.accounts.getAll.mockResolvedValue([wallet, { ...wallet, id: "second" }]);
+    const result = await submit(inferredRows, {}, {}, reviewed);
+    expect(result.outcome).toBe("changed");
+    expect(result.preview[0].accountId).toBe("");
+    expect(host.activities.saveMany).not.toHaveBeenCalled();
+  });
+
   it("仅新增就绪行，来源一次写入；再次提交先刷新而不重复写", async () => {
     const { host, submit, reviewed, stored } = mockHost();
     expect((await submit(rows, mapping, {}, reviewed)).created).toBe(1);

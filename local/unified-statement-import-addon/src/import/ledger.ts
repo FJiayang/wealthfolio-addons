@@ -1,11 +1,14 @@
 import type { Account, Activity, ActivityCreate } from "@wealthfolio/addon-sdk";
 import { normalizeAmount } from "../parsers/csv";
 import type { EntryKind, StatementRow, StatementSource } from "../parsers/types";
+import { getStatementParser } from "../parsers";
+import { eligibleAccounts, resolveAccount, type Mappings } from "./account-matching";
+export { eligibleAccounts } from "./account-matching";
+export type { Mappings } from "./account-matching";
 
 export const METADATA_KEY = "unifiedStatementImport";
 export const MAPPING_KEY = "payment-account-mappings-v1";
 export type ExistingActivity = Pick<Activity, "id" | "metadata">;
-export type Mappings = Record<string, string>;
 export interface RowDecision {
   accountId?: string;
   kind?: EntryKind;
@@ -23,17 +26,6 @@ export interface PreviewRow {
   status: PreviewStatus;
   reason: string;
   create?: ActivityCreate;
-}
-
-export function eligibleAccounts(accounts: Account[]): Account[] {
-  return accounts.filter(
-    (account) =>
-      account.isActive &&
-      !account.isArchived &&
-      account.currency === "CNY" &&
-      (account.accountType === "CASH" || account.accountType === "CREDIT_CARD") &&
-      account.trackingMode !== "HOLDINGS",
-  );
 }
 
 export function restoreMappings(value: string | null, accounts: Account[]): Mappings {
@@ -127,10 +119,15 @@ export function buildPreview(
     }
   }
   const seen = new Set<string>();
+  const resolvedAccounts = new Map(
+    [...new Set(rows.map(({ source }) => source.paymentMethod))].map((method) => [
+      method, resolveAccount(method, accounts, mappings).accountId,
+    ]),
+  );
   return rows.map((row) => {
     const { source } = row;
     const decision = decisions[source.lineNumber] ?? {};
-    const accountId = decision.accountId ?? mappings[source.paymentMethod] ?? "";
+    const accountId = decision.accountId ?? resolvedAccounts.get(source.paymentMethod) ?? "";
     const kind = decision.kind ?? row.kind;
     let amount = decision.amount ?? source.amount;
     const result = (
@@ -179,7 +176,7 @@ export function buildPreview(
         source.merchant,
         source.description,
         source.remark,
-        `支付宝订单号：${source.recordId}`,
+        `${getStatementParser(source.system).recordIdLabel}：${source.recordId}`,
       ]
         .filter(Boolean)
         .join(" · "),
@@ -197,8 +194,9 @@ export function buildPreview(
 
 export function previewSignature(preview: PreviewRow[]): string {
   return JSON.stringify(
-    preview.map(({ row, status, reason, create }) => [
+    preview.map(({ row, accountId, status, reason, create }) => [
       row.source.lineNumber,
+      accountId,
       status,
       reason,
       create,
