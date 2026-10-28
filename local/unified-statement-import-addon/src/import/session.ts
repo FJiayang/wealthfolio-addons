@@ -21,9 +21,12 @@ export interface ImportHost {
   };
 }
 export interface Submission {
+  outcome: "changed" | "empty" | "success" | "partial" | "uncertain";
   preview: PreviewRow[];
   message: string;
+  messageValues?: Record<string, number>;
   created: number;
+  unconfirmed?: number;
 }
 
 export function createSubmitter(host: ImportHost) {
@@ -44,12 +47,14 @@ export function createSubmitter(host: ImportHost) {
       const preview = buildPreview(rows, accounts, activities, mappings, decisions);
       if (previewSignature(preview) !== previewSignature(reviewed))
         return {
+          outcome: "changed",
           preview,
           created: 0,
           message: "已有账目或账户状态发生变化，预览已刷新，请重新确认。",
         };
       const creates = preview.flatMap((entry) => (entry.create ? [entry.create] : []));
-      if (!creates.length) return { preview, created: 0, message: "没有可导入的记录。" };
+      if (!creates.length)
+        return { outcome: "empty", preview, created: 0, message: "没有可导入的记录。" };
       let response: ActivityBulkMutationResult;
       try {
         response = await host.activities.saveMany({ creates });
@@ -63,6 +68,8 @@ export function createSubmitter(host: ImportHost) {
           decisions,
         );
         return {
+          outcome: "uncertain",
+          unconfirmed: creates.length,
           preview: recovered,
           created: 0,
           message: "提交未收到成功响应，已重新读取来源记录。请核对重复及待导入行，再决定是否重试。",
@@ -77,14 +84,19 @@ export function createSubmitter(host: ImportHost) {
       );
       if (response.errors.length || response.created.length !== creates.length)
         return {
+          outcome: "partial",
           preview: refreshed,
           created: response.created.length,
-          message: `保存未完整完成：已确认新增 ${response.created.length} 笔，错误 ${response.errors.length} 条。请核对刷新后的预览；已有账目不会被覆盖。`,
+          message:
+            "保存未完整完成：已确认新增 {{count}} 笔，错误 {{errors}} 条。请核对刷新后的预览；已有账目不会被覆盖。",
+          messageValues: { count: response.created.length, errors: response.errors.length },
         };
       return {
+        outcome: "success",
         preview: refreshed,
         created: response.created.length,
-        message: `已新增 ${response.created.length} 笔。重复、排除及未确认记录未提交。`,
+        message: "已新增 {{count}} 笔。重复、排除及未确认记录未提交。",
+        messageValues: { count: response.created.length },
       };
     } finally {
       busy = false;

@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
+import { useAddonTranslation } from "@wealthfolio/addon-sdk";
+import { CsvParseError } from "../parsers/csv";
 import {
-  Alert,
-  AlertDescription,
+  AlertFeedback,
+  ImportWizardLayout,
+  FileDropzone,
+  WizardStepIndicator,
+  StepNavigation,
+  CancelConfirmationDialog,
+  ImportResultSummary,
+  DataGrid,
+  useDataGrid,
+  useDirection,
   Button,
   Badge,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Checkbox,
-  Input,
   Icons,
   Page,
   PageContent,
@@ -20,12 +25,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  useAmountFormatting,
+  useNumberFormatting,
+  useDateFormatting,
 } from "@wealthfolio/ui";
 import { parseStatement } from "../parsers";
 import type { EntryKind, StatementRow } from "../parsers/types";
@@ -42,7 +44,7 @@ import {
   type RowDecision,
 } from "../import/ledger";
 import { createSubmitter } from "../import/session";
-import { ImportStepIndicator, type ImportStep } from "../components/import-step-indicator";
+type ImportStep = "upload" | "mapping" | "preview" | "confirm" | "result";
 
 const labels: Record<PreviewStatus, string> = {
   ready: "待导入",
@@ -52,28 +54,12 @@ const labels: Record<PreviewStatus, string> = {
   error: "错误",
 };
 const statusAppearance = {
-  ready: {
-    className: "border-success-subtle-border bg-success-subtle text-success-subtle-foreground",
-    icon: Icons.CheckCircle,
-  },
-  duplicate: {
-    className: "border-info-subtle-border bg-info-subtle text-info-subtle-foreground",
-    icon: Icons.Copy,
-  },
-  excluded: {
-    className: "border-border bg-muted/30 text-muted-foreground",
-    icon: Icons.MinusCircle,
-  },
-  review: {
-    className: "border-warning-subtle-border bg-warning-subtle text-warning-subtle-foreground",
-    icon: Icons.AlertCircle,
-  },
-  error: {
-    className:
-      "border-destructive-subtle-border bg-destructive-subtle text-destructive-subtle-foreground",
-    icon: Icons.XCircle,
-  },
-};
+  ready: { variant: "success-subtle", icon: Icons.CheckCircle },
+  duplicate: { variant: "info-subtle", icon: Icons.Copy },
+  excluded: { variant: "outline", icon: Icons.MinusCircle },
+  review: { variant: "warning-subtle", icon: Icons.AlertCircle },
+  error: { variant: "destructive-subtle", icon: Icons.XCircle },
+} as const;
 const kinds: Record<EntryKind, string> = { expense: "支出", income: "收入", refund: "支出退款" };
 
 function Choice({
@@ -89,19 +75,20 @@ function Choice({
   onChange(value: string): void;
   disabled?: boolean;
 }) {
+  const { t } = useAddonTranslation();
   return (
     <Select
       value={value || "__none__"}
       onValueChange={(next) => onChange(next === "__none__" ? "" : (next ?? ""))}
       disabled={disabled}
     >
-      <SelectTrigger aria-label={label} className="h-8 w-full min-w-32 rounded-md text-xs">
+      <SelectTrigger aria-label={t(label)} className="h-8 w-full min-w-32 rounded-md text-xs">
         <SelectValue>
-          {options.find((option) => option.value === value)?.label ?? "请选择"}
+          {options.find((option) => option.value === value)?.label ?? t("请选择")}
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">请选择</SelectItem>
+        <SelectItem value="__none__">{t("请选择")}</SelectItem>
         {options.map((option) => (
           <SelectItem key={option.value} value={option.value}>
             {option.label}
@@ -113,6 +100,19 @@ function Choice({
 }
 
 export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
+  const { t } = useAddonTranslation();
+  const { formatAmount } = useAmountFormatting();
+  const { formatDecimal } = useNumberFormatting();
+  const { formatDateTime } = useDateFormatting();
+  const n = (value: number) => formatDecimal(value, { maximumFractionDigits: 0 });
+  const dir = useDirection();
+  const [file, setFile] = useState<File | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [submission, setSubmission] = useState<Awaited<
+    ReturnType<ReturnType<typeof createSubmitter>>
+  > | null>(null);
+  const [errorLine, setErrorLine] = useState<number>();
+  const [messageValues, setMessageValues] = useState<Record<string, number>>({});
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activities, setActivities] = useState<ExistingActivity[]>([]);
   const [rows, setRows] = useState<StatementRow[]>([]);
@@ -125,7 +125,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [message, setMessage] = useState("");
   const submitting = useRef(false);
   const submitter = useMemo(() => createSubmitter(ctx.api), [ctx]);
-  const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -156,7 +155,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const available = eligibleAccounts(accounts);
   const accountOptions = available.map((account) => ({
     value: account.id,
-    label: `${account.name} · ${account.accountType === "CREDIT_CARD" ? "信用卡" : "现金"}`,
+    label: `${account.name} · ${t(account.accountType === "CREDIT_CARD" ? "信用卡" : "现金")}`,
   }));
   const evaluated = useMemo(() => {
     try {
@@ -189,6 +188,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   }
 
   async function upload(file: File) {
+    setFile(file);
+    setErrorLine(undefined);
     setBusy(true);
     setError("");
     setMessage("");
@@ -199,9 +200,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       setStep("mapping");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "账单读取失败。");
+      setErrorLine(cause instanceof CsvParseError ? cause.lineNumber : undefined);
     } finally {
       setBusy(false);
-      if (input.current) input.current.value = "";
     }
   }
 
@@ -227,14 +228,16 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setMessage("");
     try {
       const result = await submitter(rows, mappings, decisions, preview);
+      setSubmission(result);
       setMessage(result.message);
+      setMessageValues(result.messageValues ?? {});
       const [currentAccounts, currentActivities] = await Promise.all([
         ctx.api.accounts.getAll(),
         ctx.api.activities.getAll(),
       ]);
       setAccounts(currentAccounts);
       setActivities(currentActivities);
-      if (result.created > 0) setStep("result");
+      setStep(result.outcome === "changed" || result.outcome === "empty" ? "preview" : "result");
     } catch {
       setError("提交或结果核对失败。请点击“刷新核对”重新读取账目后再提交；请勿直接重复导入。");
       setLoaded(false);
@@ -278,6 +281,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   }
 
   function cancel() {
+    setFile(null);
+    setSubmission(null);
     setRows([]);
     setDecisions({});
     setStep("upload");
@@ -285,417 +290,418 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setMessage("");
   }
 
+  useEffect(() => {
+    void ctx.router.setLeaveGuard(rows.length > 0 && step !== "result");
+  }, [ctx, rows.length, step]);
+
+  const locked = (entry: PreviewRow) =>
+    busy || entry.row.excluded || entry.status === "duplicate" || !!entry.row.error;
+  const gridRows = useMemo(
+    () => preview.map((entry) => ({ ...entry, line: entry.row.source.lineNumber })),
+    [preview],
+  );
+  const columns = useMemo(
+    () => [
+      { id: "line", accessorKey: "line", header: "#", size: 70, meta: { readOnly: true } },
+      ...(
+        [
+          "date",
+          "merchant",
+          "description",
+          "category",
+          "direction",
+          "paymentMethod",
+          "status",
+          "recordId",
+          "amount",
+        ] as const
+      ).map((key, index) => ({
+        id: "source-" + key,
+        header: () =>
+          t(
+            [
+              "交易时间",
+              "交易对方",
+              "商品说明",
+              "来源分类",
+              "收/支",
+              "付款方式",
+              "交易状态",
+              "订单号",
+              "原金额",
+            ][index],
+          ),
+        accessorFn: (entry: PreviewRow) => entry.row.source[key],
+        cell: ({ row }: { row: { original: PreviewRow } }) => {
+          const source = row.original.row.source;
+          const value = source[key];
+          return (
+            <span title={String(value)}>
+              {key === "date" && value
+                ? formatDateTime(value, { dateStyle: "short", timeStyle: "short" })
+                : key === "amount"
+                  ? formatAmount(value, source.currency, false)
+                  : value}
+            </span>
+          );
+        },
+        size: key === "description" || key === "recordId" ? 220 : 160,
+      })),
+      {
+        id: "kind",
+        header: () => t("记账性质"),
+        size: 150,
+        cell: ({ row }: { row: { original: PreviewRow } }) => (
+          <Choice
+            label={t("第 {{line}} 行性质", { line: n(row.original.row.source.lineNumber) })}
+            value={row.original.kind ?? ""}
+            options={Object.entries(kinds).map(([value, label]) => ({ value, label: t(label) }))}
+            disabled={locked(row.original)}
+            onChange={(kind) =>
+              changeDecision(row.original.row.source.lineNumber, {
+                kind: kind ? (kind as EntryKind) : undefined,
+              })
+            }
+          />
+        ),
+      },
+      {
+        id: "amount",
+        accessorKey: "amount",
+        header: t("确认金额"),
+        size: 150,
+        meta: {
+          readOnly: locked,
+          cell: {
+            variant: "number" as const,
+            valueType: "string" as const,
+            min: 0,
+            valueRenderer: (value: string | number | null) =>
+              formatAmount(value ?? "", "CNY", false),
+          },
+        },
+      },
+      {
+        id: "accountId",
+        header: () => t("目标账户"),
+        size: 240,
+        cell: ({ row }: { row: { original: PreviewRow } }) => (
+          <Choice
+            label={t("第 {{line}} 行账户", { line: n(row.original.row.source.lineNumber) })}
+            value={row.original.accountId}
+            options={accountOptions}
+            disabled={locked(row.original)}
+            onChange={(accountId) =>
+              changeDecision(row.original.row.source.lineNumber, { accountId })
+            }
+          />
+        ),
+      },
+      {
+        id: "processing",
+        header: () => t("处理状态"),
+        size: 320,
+        cell: ({ row }: { row: { original: PreviewRow } }) => {
+          const entry = row.original;
+          const appearance = statusAppearance[entry.status];
+          const Icon = appearance.icon;
+          return (
+            <div className="flex items-center gap-2" title={t(entry.reason)}>
+              <Badge variant={appearance.variant} data-processing-status={entry.status}>
+                <Icon className="me-1 size-3" />
+                {t(labels[entry.status])}
+              </Badge>
+              <span className="truncate">{t(entry.reason)}</span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: () => t("操作"),
+        size: 220,
+        cell: ({ row }: { row: { original: PreviewRow } }) => {
+          const entry = row.original;
+          const source = entry.row.source;
+          const decision = decisions[source.lineNumber] ?? {};
+          return (
+            <div className="flex gap-3">
+              {!entry.row.excluded && entry.status !== "duplicate" && (
+                <label className="flex items-center gap-1">
+                  <Checkbox
+                    aria-label={t("第 {{line}} 行排除", { line: n(source.lineNumber) })}
+                    disabled={busy}
+                    checked={!!decision.excluded}
+                    onCheckedChange={(excluded) => changeDecision(source.lineNumber, { excluded })}
+                  />
+                  {t("排除")}
+                </label>
+              )}
+              {entry.row.reviewReason &&
+                !entry.row.excluded &&
+                entry.status !== "duplicate" &&
+                !decision.excluded && (
+                  <label className="flex items-center gap-1">
+                    <Checkbox
+                      aria-label={t("第 {{line}} 行确认", { line: n(source.lineNumber) })}
+                      disabled={busy || !entry.kind || !entry.accountId || !entry.amount}
+                      checked={!!decision.confirmed}
+                      onCheckedChange={(confirmed) =>
+                        changeDecision(source.lineNumber, { confirmed })
+                      }
+                    />
+                    {t("确认")}
+                  </label>
+                )}
+            </div>
+          );
+        },
+      },
+    ],
+    [t, busy, decisions, accountOptions, formatAmount, formatDateTime],
+  );
+  const grid = useDataGrid({
+    data: gridRows,
+    columns,
+    getRowId: (entry) => String(entry.line),
+    dir,
+    readOnly: busy,
+    enableRowSelection: false,
+    enableSearch: false,
+    enablePaste: false,
+    onDataChange: (next) => {
+      for (const entry of next) {
+        const before = preview.find((candidate) => candidate.row.source.lineNumber === entry.line);
+        if (before && !locked(before) && entry.amount !== before.amount)
+          changeDecision(entry.line, { amount: entry.amount });
+      }
+    },
+  });
+  const steps = [
+    { id: "upload", label: t("上传支付宝交易明细") },
+    { id: "mapping", label: t("账户映射") },
+    { id: "preview", label: t("逐笔预览") },
+    { id: "confirm", label: t("提交确认") },
+  ];
+  const statistics = Object.entries(labels).map(([status, label]) => ({
+    label: t(label),
+    value: n(counts[status] ?? 0),
+  }));
+  function back() {
+    if (step === "confirm") setStep("preview");
+    else if (step === "preview") setStep("mapping");
+    else setStep("upload");
+  }
+  function next() {
+    if (step === "upload") setStep("mapping");
+    else if (step === "mapping") void saveMappings();
+    else if (step === "preview") setStep("confirm");
+    else if (step === "confirm") void submit();
+  }
+
   return (
-    <div className="statement-import">
-      <Page>
+    <div className="statement-import h-dvh min-h-0">
+      <Page className="flex h-full min-h-0 flex-col">
         <PageHeader
-          heading="账单导入"
+          heading={t("账单导入")}
           actions={
-            <Button variant="outline" disabled={busy} onClick={() => void refresh()}>
-              刷新核对
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" disabled={busy} onClick={() => void refresh()}>
+                {t("刷新核对")}
+              </Button>
+              <Button variant="ghost" disabled={busy || !file} onClick={() => setConfirmOpen(true)}>
+                {t("结束 / 取消本次导入")}
+              </Button>
+            </div>
           }
         />
-        <PageContent withPadding={false}>
-          <div className="px-2 pt-2 pb-6 sm:px-4 sm:pt-4 md:px-6 md:pt-6">
-            <Card className="w-full gap-0 overflow-hidden">
-              <CardHeader className="shrink-0 border-b px-3 py-3 sm:px-6 sm:py-4">
-                <ImportStepIndicator currentStep={step} />
-              </CardHeader>
-              <CardContent className="space-y-6 p-3 sm:p-6">
-                {(error || evaluated.error) && (
-                  <Alert variant="destructive">
-                    <AlertDescription role="alert">{error || evaluated.error}</AlertDescription>
-                  </Alert>
-                )}
-                {message && step !== "result" && (
-                  <Alert>
-                    <AlertDescription role="status">{message}</AlertDescription>
-                  </Alert>
-                )}
-                {step === "upload" && (
-                  <Card className="border-0 bg-transparent shadow-none">
-                    <CardHeader className="px-0 pt-0">
-                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                        <span className="text-muted-foreground font-mono text-xs tabular-nums">
-                          01
-                        </span>
-                        上传支付宝交易明细
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 px-0 pb-0">
-                      <Input
-                        ref={input}
-                        aria-label="选择 CSV 文件"
-                        type="file"
-                        className="sr-only"
-                        accept=".csv,text/csv"
-                        disabled={busy || !loaded}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) void upload(file);
-                        }}
-                      />
-                      <Button
-                        variant="outline"
-                        className="bg-background/50 hover:bg-background/80 hover:border-muted-foreground/50 h-32 w-full flex-col gap-2 rounded-lg border-dashed"
-                        disabled={busy || !loaded}
-                        onClick={() => input.current?.click()}
-                      >
-                        <Icons.Upload className="text-muted-foreground size-5" />
-                        <span>{busy ? "正在读取账单…" : "选择 CSV 文件"}</span>
-                        <span className="text-muted-foreground text-xs font-normal">
-                          支付宝交易明细 · UTF-8 / GB18030
-                        </span>
-                      </Button>
-                      <p className="text-muted-foreground text-xs">
-                        原文件只在本地读取，预览确认后才会保存账目。
-                      </p>
-                      {!loaded && (
-                        <p className="text-muted-foreground text-sm">正在等待账户与账目数据。</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-                {step === "mapping" && (
-                  <Card className="border-0 bg-transparent shadow-none">
-                    <CardHeader className="px-0 pt-0">
-                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                        <span className="text-muted-foreground font-mono text-xs tabular-nums">
-                          02
-                        </span>
-                        映射实际资金账户
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 px-0 pb-0">
-                      <p className="text-muted-foreground text-sm">
-                        已读取 {rows.length}{" "}
-                        条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。
-                      </p>
-                      {!available.length && (
-                        <Alert variant="warning">
-                          <AlertDescription>
-                            没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                      <div className="statement-import-scroll max-h-[65vh] rounded-md border">
-                        <Table
-                          aria-label="账户映射"
-                          containerClassName="overflow-visible"
-                          className="statement-import-grid min-w-[640px] border-separate border-spacing-0 text-xs"
-                        >
-                          <TableHeader className="bg-card sticky top-0 z-10">
-                            <TableRow>
-                              <TableHead>#</TableHead>
-                              <TableHead>付款方式</TableHead>
-                              <TableHead>目标账户</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {paymentMethods.map((method, index) => (
-                              <TableRow key={method}>
-                                <TableCell className="w-12 font-mono tabular-nums">
-                                  {index + 1}
-                                </TableCell>
-                                <TableCell className="max-w-96 truncate" title={method}>
-                                  {method || "未提供付款方式（请指定收款账户）"}
-                                </TableCell>
-                                <TableCell className="w-64 min-w-64">
-                                  <Choice
-                                    label={`账户映射：${method || "未提供付款方式"}`}
-                                    value={mappings[method] ?? ""}
-                                    options={accountOptions}
-                                    disabled={busy}
-                                    onChange={(id) =>
-                                      setMappings((current) => ({ ...current, [method]: id }))
-                                    }
-                                  />
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                      <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:items-center">
-                        <Button variant="outline" disabled={busy} onClick={cancel}>
-                          <Icons.ArrowLeft className="me-2 size-4 rtl:rotate-180" />
-                          取消本次导入
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() => void resetMappings()}
-                        >
-                          重置映射
-                        </Button>
-                        <Button
-                          className="sm:ms-auto"
-                          disabled={busy}
-                          onClick={() => void saveMappings()}
-                        >
-                          保存映射并预览
-                          <Icons.ArrowRight className="ms-2 size-4 rtl:rotate-180" />
-                        </Button>
-                      </div>
-                      <p className="text-muted-foreground text-xs">
-                        只记住付款方式与系统账户的映射；不会保存账单文件。未映射行不会提交。
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-                {(step === "preview" || step === "result") && (
-                  <>
-                    {step === "result" && (
-                      <div
-                        className="flex flex-col items-center gap-3 py-6 text-center"
-                        role="status"
-                      >
-                        <div className="bg-success-subtle text-success-subtle-foreground flex size-14 items-center justify-center rounded-full">
-                          <Icons.Check className="size-7" />
-                        </div>
-                        <h2 className="text-xl font-semibold">导入结果</h2>
-                        <p className="text-muted-foreground text-sm">{message}</p>
-                      </div>
+        <PageContent
+          withPadding={false}
+          className="min-h-0 flex-1 md:min-h-0 [&>div]:h-full [&>div]:min-h-0"
+        >
+          <div className="h-full min-h-0 px-2 pt-2 pb-6 sm:px-4 sm:pt-4 md:px-6 md:pt-6">
+            <ImportWizardLayout
+              isResult={step === "result"}
+              steps={<WizardStepIndicator label={t("导入进度")} steps={steps} currentStep={step} />}
+              navigation={
+                step !== "result" ? (
+                  <StepNavigation
+                    onBack={back}
+                    onNext={next}
+                    canGoBack={!busy && step !== "upload"}
+                    canGoNext={
+                      !busy &&
+                      loaded &&
+                      (step !== "upload" || rows.length > 0) &&
+                      !evaluated.error &&
+                      (step === "upload" || step === "mapping" || !!counts.ready)
+                    }
+                    nextLabel={
+                      step === "confirm"
+                        ? t("确认仅导入已就绪 {{count}} 笔", { count: n(counts.ready) })
+                        : step === "mapping"
+                          ? t("保存映射并预览")
+                          : t("提交确认")
+                    }
+                    nextLoadingLabel={t("正在核对并保存…")}
+                    backLabel={step === "preview" ? t("返回账户映射") : t("上一步")}
+                    isNextLoading={busy}
+                  />
+                ) : undefined
+              }
+            >
+              {(error || evaluated.error) && (
+                <AlertFeedback variant="error" title={t("错误")} role="alert">
+                  {t(
+                    error || evaluated.error,
+                    errorLine === undefined ? {} : { line: n(errorLine) },
+                  )}
+                </AlertFeedback>
+              )}
+              {message && step !== "result" && (
+                <AlertFeedback variant="warning" title={t("核对提示")}>
+                  {t(
+                    message,
+                    Object.fromEntries(
+                      Object.entries(messageValues).map(([key, value]) => [key, n(value)]),
+                    ),
+                  )}
+                </AlertFeedback>
+              )}
+              {step === "upload" && (
+                <div className="space-y-4">
+                  <FileDropzone
+                    file={file}
+                    onFileChange={(nextFile) => {
+                      if (file) setConfirmOpen(true);
+                      else if (nextFile) void upload(nextFile);
+                    }}
+                    isLoading={busy || !loaded}
+                    accept=".csv,text/csv"
+                    error={error}
+                    labels={{
+                      choose: t("选择 CSV 文件"),
+                      remove: t("移除文件"),
+                      processing: t("正在读取账单…"),
+                      drop: t("或拖拽文件"),
+                      hint: t("支付宝交易明细 · UTF-8 / GB18030"),
+                    }}
+                  />
+                  <p className="text-muted-foreground text-sm">
+                    {t("原文件只在本地读取，预览确认后才会保存账目。")}
+                  </p>
+                </div>
+              )}
+              {step === "mapping" && (
+                <div className="space-y-4">
+                  <AlertFeedback variant="warning" title={t("映射实际资金账户")}>
+                    {t(
+                      "已读取 {{count}} 条明细。银行卡名称及尾号仅作提示，请选择实际扣款或收款账户。余额宝、花呗或组合付款不应直接当作支付宝余额。",
+                      { count: n(rows.length) },
                     )}
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                      {Object.entries(labels).map(([status, label]) => {
-                        const { className, icon: Icon } = statusAppearance[status as PreviewStatus];
-                        return (
-                          <Card key={status} className={className} data-processing-status={status}>
-                            <CardContent className="flex items-center gap-3 p-3">
-                              <Icon aria-hidden="true" className="size-5 shrink-0" />
-                              <div>
-                                <p className="text-xs font-medium">{label}</p>
-                                <p className="font-mono text-xl font-semibold tabular-nums">
-                                  {counts[status]}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                    <Alert>
-                      <AlertDescription>
-                        仅提交已就绪记录。不计收支、组合支付及未知状态需逐笔确认性质、实际金额和账户；转账、还款、理财请排除。本版保留来源分类，不自动分配系统分类。
-                      </AlertDescription>
-                    </Alert>
-                    <section className="space-y-3" aria-label="逐笔预览">
-                      <div className="flex items-center justify-between gap-2">
-                        <h2 className="text-sm font-semibold">逐笔预览 · CNY</h2>
-                        <span className="text-muted-foreground font-mono text-xs">
-                          共 {preview.length} 条
-                        </span>
-                      </div>
-                      <div className="statement-import-scroll max-h-[65vh] rounded-md border">
-                        <Table
-                          aria-label="账单预览"
-                          containerClassName="overflow-visible"
-                          className="statement-import-grid w-max min-w-full border-separate border-spacing-0 font-mono text-xs"
-                        >
-                          <TableHeader className="bg-card sticky top-0 z-10">
-                            <TableRow>
-                              {[
-                                "#",
-                                "交易时间",
-                                "交易对方",
-                                "商品说明",
-                                "来源分类",
-                                "收/支",
-                                "付款方式",
-                                "交易状态",
-                                "订单号",
-                                "原金额",
-                                "记账性质",
-                                "确认金额",
-                                "目标账户",
-                                "处理状态",
-                                "操作",
-                              ].map((label) => (
-                                <TableHead key={label}>{label}</TableHead>
-                              ))}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {preview.map((entry) => {
-                              const { row } = entry;
-                              const source = row.source;
-                              const decision = decisions[source.lineNumber] ?? {};
-                              const StatusIcon = statusAppearance[entry.status].icon;
-                              const locked =
-                                busy ||
-                                row.excluded ||
-                                entry.status === "duplicate" ||
-                                Boolean(row.error);
-                              return (
-                                <TableRow key={source.lineNumber}>
-                                  <TableCell className="w-12 tabular-nums">
-                                    {source.lineNumber}
-                                  </TableCell>
-                                  <TableCell>{source.originalTime}</TableCell>
-                                  <TableCell className="max-w-48 truncate" title={source.merchant}>
-                                    {source.merchant}
-                                  </TableCell>
-                                  <TableCell
-                                    className="max-w-64 truncate"
-                                    title={source.description}
-                                  >
-                                    {source.description}
-                                  </TableCell>
-                                  <TableCell>{source.category}</TableCell>
-                                  <TableCell>{source.direction}</TableCell>
-                                  <TableCell
-                                    className="max-w-56 truncate"
-                                    title={source.paymentMethod}
-                                  >
-                                    {source.paymentMethod || "未提供"}
-                                  </TableCell>
-                                  <TableCell>{source.status}</TableCell>
-                                  <TableCell>{source.recordId || "缺失"}</TableCell>
-                                  <TableCell data-numeric>{source.amount}</TableCell>
-                                  <TableCell className="min-w-36">
-                                    <Choice
-                                      label={`第 ${source.lineNumber} 行性质`}
-                                      value={entry.kind ?? ""}
-                                      options={Object.entries(kinds).map(([value, label]) => ({
-                                        value,
-                                        label,
-                                      }))}
-                                      disabled={locked}
-                                      onChange={(kind) =>
-                                        changeDecision(source.lineNumber, {
-                                          kind: kind ? (kind as EntryKind) : undefined,
-                                        })
-                                      }
-                                    />
-                                  </TableCell>
-                                  <TableCell className="w-28 min-w-28">
-                                    <Input
-                                      aria-label={`第 ${source.lineNumber} 行确认金额`}
-                                      inputMode="decimal"
-                                      value={entry.amount}
-                                      disabled={locked}
-                                      className="h-8 rounded-md text-end font-mono text-xs"
-                                      onChange={(event) =>
-                                        changeDecision(source.lineNumber, {
-                                          amount: event.target.value,
-                                        })
-                                      }
-                                    />
-                                  </TableCell>
-                                  <TableCell className="min-w-56">
-                                    <Choice
-                                      label={`第 ${source.lineNumber} 行账户`}
-                                      value={entry.accountId}
-                                      options={accountOptions}
-                                      disabled={locked}
-                                      onChange={(accountId) =>
-                                        changeDecision(source.lineNumber, { accountId })
-                                      }
-                                    />
-                                  </TableCell>
-                                  <TableCell title={entry.reason}>
-                                    <div className="flex items-center gap-2">
-                                      <Badge
-                                        variant="outline"
-                                        className={`gap-1 text-xs ${statusAppearance[entry.status].className}`}
-                                        data-processing-status={entry.status}
-                                      >
-                                        <StatusIcon aria-hidden="true" className="size-3" />
-                                        {labels[entry.status]}
-                                      </Badge>
-                                      <span className="text-muted-foreground max-w-56 truncate">
-                                        {entry.reason}
-                                      </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex items-center gap-3">
-                                      {!row.excluded && entry.status !== "duplicate" && (
-                                        <label className="flex items-center gap-1.5">
-                                          <Checkbox
-                                            aria-label={`第 ${source.lineNumber} 行排除`}
-                                            disabled={busy}
-                                            checked={Boolean(decision.excluded)}
-                                            onCheckedChange={(checked) =>
-                                              changeDecision(source.lineNumber, {
-                                                excluded: checked,
-                                              })
-                                            }
-                                          />
-                                          排除
-                                        </label>
-                                      )}
-                                      {row.reviewReason &&
-                                        !row.excluded &&
-                                        entry.status !== "duplicate" &&
-                                        !decision.excluded && (
-                                          <label
-                                            className="flex items-center gap-1.5"
-                                            title="已核实性质、实际金额和账户"
-                                          >
-                                            <Checkbox
-                                              aria-label={`第 ${source.lineNumber} 行确认`}
-                                              disabled={
-                                                busy ||
-                                                !entry.kind ||
-                                                !entry.accountId ||
-                                                Boolean(row.error) ||
-                                                !source.recordId
-                                              }
-                                              checked={Boolean(decision.confirmed)}
-                                              onCheckedChange={(checked) =>
-                                                changeDecision(source.lineNumber, {
-                                                  confirmed: checked,
-                                                })
-                                              }
-                                            />
-                                            已核实
-                                          </label>
-                                        )}
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </section>
-                    <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:items-center">
-                      <Button
-                        variant="outline"
+                  </AlertFeedback>
+                  {!available.length && (
+                    <AlertFeedback variant="warning" title={t("待确认")}>
+                      {t("没有可用的 CNY 现金或信用卡账户，请先在主程序创建账户。")}
+                    </AlertFeedback>
+                  )}
+                  {paymentMethods.map((method) => (
+                    <label key={method} className="grid items-center gap-3 sm:grid-cols-2">
+                      <span>{method || t("未提供付款方式（请指定收款账户）")}</span>
+                      <Choice
+                        label={t("账户映射：{{method}}", { method })}
+                        value={mappings[method] ?? ""}
+                        options={accountOptions}
                         disabled={busy}
-                        onClick={() => {
-                          setStep("mapping");
-                          setMessage("");
-                        }}
-                      >
-                        <Icons.ArrowLeft className="me-2 size-4 rtl:rotate-180" />
-                        返回账户映射
-                      </Button>
-                      <Button variant="ghost" disabled={busy} onClick={cancel}>
-                        结束 / 取消本次导入
-                      </Button>
-                      <Button
-                        className="sm:ms-auto"
-                        disabled={busy || !loaded || Boolean(evaluated.error) || !counts.ready}
-                        onClick={() => void submit()}
-                      >
-                        {busy ? "正在核对并保存…" : `确认仅导入已就绪 ${counts.ready} 笔`}
-                        <Icons.ArrowRight className="ms-2 size-4 rtl:rotate-180" />
-                      </Button>
-                    </div>
-                  </>
+                        onChange={(id) => setMappings((current) => ({ ...current, [method]: id }))}
+                      />
+                    </label>
+                  ))}
+                  <Button variant="outline" disabled={busy} onClick={() => void resetMappings()}>
+                    {t("重置映射")}
+                  </Button>
+                </div>
+              )}
+              {(step === "preview" || step === "confirm") && (
+                <div className="space-y-4">
+                  <dl className="flex flex-wrap gap-6">
+                    {statistics.map(({ label, value }) => (
+                      <div key={label}>
+                        <dt className="text-muted-foreground text-sm">{label}</dt>
+                        <dd className="text-xl tabular-nums">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <AlertFeedback variant="warning" title={t("提交确认")}>
+                    {t(
+                      "仅提交已就绪记录。不计收支、组合支付及未知状态需逐笔确认性质、实际金额和账户；转账、还款、理财请排除。本版保留来源分类，不自动分配系统分类。",
+                    )}
+                  </AlertFeedback>
+                  {step === "preview" && <DataGrid {...grid} dir={dir} height={440} />}
+                </div>
+              )}
+              {step === "result" && submission && (
+                <ImportResultSummary
+                  title={t(
+                    submission.outcome === "success"
+                      ? "导入完成"
+                      : submission.outcome === "partial"
+                        ? "部分完成"
+                        : "结果待核对",
+                  )}
+                  outcome={
+                    submission.outcome === "success"
+                      ? "success"
+                      : submission.outcome === "partial"
+                        ? "partial"
+                        : "uncertain"
+                  }
+                  description={t(
+                    submission.message,
+                    Object.fromEntries(
+                      Object.entries(submission.messageValues ?? {}).map(([key, value]) => [
+                        key,
+                        n(value),
+                      ]),
+                    ),
+                  )}
+                  statistics={[
+                    { label: t("本次确认新增"), value: n(submission.created) },
+                    {
+                      label: t(submission.outcome === "uncertain" ? "待确认" : "未提交"),
+                      value: n(submission.unconfirmed ?? rows.length - submission.created),
+                    },
+                  ]}
+                >
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setStep("preview");
+                      setMessage("");
+                    }}
+                  >
+                    {t("返回预览")}
+                  </Button>
+                  <Button onClick={cancel}>{t("开始新导入")}</Button>
+                </ImportResultSummary>
+              )}
+              <p className="text-muted-foreground mt-3 text-xs">
+                {t(
+                  "重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。",
                 )}
-              </CardContent>
-            </Card>
-            <p className="text-muted-foreground mt-3 text-xs">
-              重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。
-            </p>
+              </p>
+            </ImportWizardLayout>
           </div>
         </PageContent>
+        <CancelConfirmationDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          onConfirm={cancel}
+          title={t("放弃本次导入？")}
+          description={t("将清除已上传账单和未提交的修改。")}
+          continueLabel={t("继续编辑")}
+          cancelLabel={t("取消本次导入")}
+        />
       </Page>
     </div>
   );

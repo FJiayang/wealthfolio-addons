@@ -1,34 +1,34 @@
 # 蚂蚁基金 PDF 导入 / Ant Fund PDF Import
 
-Local fork addon, not an official Wealthfolio release. Requires Wealthfolio 3.11.0+.
+本地插件，要求 Wealthfolio 3.11.1+。
 
-## 使用
+1. 安装 ZIP 后上传蚂蚁基金文字型交易明细 PDF；文件仅在本地内存解析。
+2. 核对原始交易。可修正确认日期、买卖类型、代码、最终收付金额、份额和手续费，或明确排除记录。转换需补齐双方；分红需提供实际再投资金额。
+3. 选择人民币、使用交易流水跟踪的投资账户，继续进入宿主向导。
+4. 在宿主完成资产识别、活动审核、重复处理、确认和提交。插件不再搜索绑定基金或直接提交活动。
+5. 如需返回原始交易修正，确认放弃宿主编辑后返回；插件保留解析与修正内容，再次交接会重新审核。
 
-1. 通过“从文件安装”安装构建生成的 ZIP，在侧栏打开“蚂蚁基金 PDF”。
-2. 选择使用交易流水跟踪的人民币投资账户，上传蚂蚁基金导出的文字型交易明细 PDF。
-3. 在“核对基金”表格打开搜索对话框，通过宿主已配置的行情源逐一核对代码、名称和 A/C 等份额类别并绑定。尚未创建、且没有交易所 MIC 的场外基金会显示“先创建资产”提示并禁用绑定；请先在宿主创建资产，再搜索绑定。离开页面会丢弃当前会话，请先完成资产准备后再上传。
-4. 进入“预览确认”，按状态筛选和分页核对流水。在编辑对话框修改确认日期、买卖类型、基金代码、最终收付金额、份额和手续费，切换标签查看 PDF 原始字段与页码；保存后必须重新校验。基金转换需补齐双方，分红需补齐实际再投资金额；不导入的记录必须明确排除。
-5. 校验并检查重复，核对宿主提示后确认导入。重复记录默认跳过；只有明确勾选才强制导入。导入不会自动重试，失败时显示逐条错误及导入批次。
+金额视为最终收付金额：买入单价=(金额-手续费)/份额，卖出单价=(金额+手续费)/份额；费用不重复扣减。使用确认日期；分红映射为 DRIP，不猜测净值。不生成充值、提现或期初余额。
 
-确认金额视为最终收付金额；买入单价=(金额-手续费)/份额，卖出单价=(金额+手续费)/份额。使用确认日记账，不补造充值、提现或期初余额，账户现金可能需要另行维护。分红映射为 DRIP，不猜测净值。
+仅支持当前 12 列文字版式，不支持扫描件、OCR、加密 PDF 或其他机构。交易页提取失败时整份文件停止导入；无效日期保留供修正。金额和份额使用精确十进制字符串。
 
-PDF、身份信息和解析会话仅保留在内存，不上传或持久化。基金搜索和宿主导入可能使用用户已启用的行情源；插件没有直接网络权限。备注固定为 `Ant Fund order:<订单号>`；同文件重导依赖宿主去重，不保证与备注或金额口径不同的其他渠道去重。
+活动备注保持
+`Ant Fund order:<订单号>`。重复处理完全沿用宿主规则，不保证与其他渠道不同备注或金额口径的记录去重。资产识别可能调用宿主已启用的行情源。插件只声明账户读取及
+`activities.openImport` 权限，无直接网络权限。
 
-仅支持当前蚂蚁基金 12 列版式，不支持 OCR、扫描件、加密 PDF 或其他机构格式。离开页面会丢弃未保存的修改。
+未提交的数据只保存在内存。取消和移除文件需确认；移动端离开保护沿用宿主能力，不拦截浏览器前进/后退，不支持刷新恢复。
 
-交易页未提取到表格时整份文件停止导入，只跳过封面和已确认的末页签署日期。单条确认日期异常会保留为待补齐记录，可修改或排除。校验预览、重复提示和失败结果均显示对应的原始记录编号，转换分腿同时显示买卖类型。
+## 开发和验证
 
-## English
+本地开发依赖链接到同级目录 `wealthfolio/packages`
+的 SDK/UI 及宿主 React；先在宿主执行：
 
-Select an existing CNY securities account with transaction tracking, upload an unencrypted text statement, and bind every fund using the host's search. Confirm codes, names and share classes. Review or explicitly exclude incomplete records, validate, then confirm the import. Dividends with units but no amount need their actual reinvested value; conversions need both legs. Fees are included in the final confirmation total, not deducted twice. No cash funding records are invented.
+```sh
+pnpm --filter @wealthfolio/ui build
+pnpm --filter @wealthfolio/addon-sdk build
+```
 
-Statements stay in memory. The addon makes no direct network requests; the host may query its configured market-data providers. Duplicate overrides are opt-in. An uncertain import response requires another validation before retrying. Leaving the page discards the session.
-
-New OTC funds without an exchange MIC must be created in Wealthfolio before binding; the addon does not fabricate an exchange or switch quote modes. Prepare those assets before uploading. An unrecognized transaction page stops the entire import; only the cover and recognized final signature page are skipped. Invalid confirmation dates stay editable. Preview, duplicate and result references point back to the original record, with the activity type identifying conversion legs.
-
-## Development / CI
-
-From the repository root:
+在 addons 仓库执行：
 
 ```sh
 pnpm install --frozen-lockfile
@@ -38,10 +38,7 @@ pnpm --filter ant-fund-pdf-import-addon bundle
 pnpm --filter ant-fund-pdf-import-addon test:package
 ```
 
-The Validate workflow runs these checks on Node 24 and uploads `ant-fund-pdf-import-addon-0.1.0.zip` as an Actions artifact. No store listing or automatic publishing is configured. `pnpm check` also checks this addon's types and unit tests.
+Architecture
+impact：新增到宿主的内存草稿交接；PDF 解析及特殊交易修正由插件负责，资产识别、校验、重复处理、持久化和结果由宿主负责。不新增数据库、网络服务、后台任务或自动重试。
 
-Architecture impact: no host, SDK, database, provider configuration or persistence changes. PDF parsing runs in the sandbox's main thread, with local CMap/font resources and no Worker or fetch. Host APIs retain ownership of validation, deduplication, activity persistence and recalculation.
-
-Tests use only synthetic fixtures. `scripts/generate-fixture.py` regenerates the committed synthetic PDF with reportlab (development only). A local customer PDF may be checked separately; never commit or log its contents.
-
-Third-party code and font licenses: see THIRD-PARTY-NOTICES.md and bundled licenses.
+测试仅使用合成样例。第三方代码及字体许可见 THIRD-PARTY-NOTICES.md 和 ZIP 内许可文件。

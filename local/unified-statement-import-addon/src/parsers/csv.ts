@@ -1,5 +1,14 @@
 import type { CsvRecord } from "./types";
 
+export class CsvParseError extends Error {
+  constructor(
+    message: string,
+    readonly lineNumber: number,
+  ) {
+    super(message);
+  }
+}
+
 export function decodeStatement(bytes: Uint8Array): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -53,10 +62,11 @@ export function parseCsv(text: string): CsvRecord[] {
       line++;
       startLine = line;
     } else if (char === '"' && cell === "" && !closed) quoted = true;
-    else if (closed || char === '"') throw new Error(`第 ${line} 行 CSV 引号格式不正确。`);
+    else if (closed || char === '"')
+      throw new CsvParseError("第 {{line}} 行 CSV 引号格式不正确。", line);
     else cell += char;
   }
-  if (quoted) throw new Error(`第 ${startLine} 行 CSV 引号未闭合。`);
+  if (quoted) throw new CsvParseError("第 {{line}} 行 CSV 引号未闭合。", startLine);
   if (cell || cells.length || closed) finishRow();
   return records;
 }

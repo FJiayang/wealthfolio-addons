@@ -6,10 +6,49 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { MAPPING_KEY } from "../import/ledger";
+import { FormattingProvider, useLocalizationSettings } from "@wealthfolio/ui";
+import { translations } from "../i18n";
+
+vi.mock("@wealthfolio/addon-sdk", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@wealthfolio/addon-sdk")>()),
+  useAddonTranslation: () => {
+    const { uiLocale } = useLocalizationSettings();
+    return {
+      language: uiLocale,
+      t: (key: string, options: Record<string, unknown> = {}) => {
+        const value = translations[uiLocale]?.[key] ?? translations.en[key] ?? key;
+        return String(value).replace(/\{\{(\w+)\}\}/g, (_, name: string) =>
+          String(options[name] ?? ""),
+        );
+      },
+    };
+  },
+}));
 
 let container: HTMLDivElement;
 let root: Root;
+async function renderPage(
+  ctx: AddonContext,
+  locale = "zh-CN",
+  uiLocale = "zh",
+  timezone = "Asia/Shanghai",
+  currencyFormattingRegions = {},
+) {
+  await act(async () =>
+    root.render(
+      <FormattingProvider
+        locale={locale}
+        uiLocale={uiLocale}
+        timezone={timezone}
+        currencyFormattingRegions={currencyFormattingRegions}
+      >
+        <StatementImportPage ctx={ctx} />
+      </FormattingProvider>,
+    ),
+  );
+}
 beforeEach(() => {
+  Reflect.deleteProperty(Element.prototype, "animate");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   container = document.createElement("div");
   document.body.append(container);
@@ -33,6 +72,7 @@ function context(saved = JSON.stringify({ 账户余额: "cash" })) {
     return { created, updated: [], deleted: [], createdMappings: [], errors: [] };
   });
   const ctx = {
+    router: { setLeaveGuard: vi.fn(async () => {}) },
     api: {
       accounts: { getAll: vi.fn(async () => [account()]) },
       activities: { getAll: vi.fn(async () => [...stored]), saveMany },
@@ -59,146 +99,112 @@ async function upload(lines = [csvRow(), csvRow({ id: "pending", direction: "不
   });
 }
 
-function currentStep() {
-  return container.querySelector('[aria-label="导入进度"] [aria-current="step"]')?.textContent;
-}
-
-describe("界面流程", () => {
-  it("五种处理状态使用主题语义色，统计卡片与表格标记一致且保留文字和图标", async () => {
-    const { ctx } = context();
-    await act(async () => root.render(<StatementImportPage ctx={ctx} />));
-    await upload([
-      csvRow(),
-      csvRow(),
-      csvRow({ id: "closed", status: "交易关闭" }),
-      csvRow({ id: "pending", direction: "不计收支" }),
-      csvRow({ id: "invalid", amount: "invalid" }),
-    ]);
+describe("shared statement wizard", () => {
+  it("preserves uploaded rows across language and region changes and submits only after confirmation", async () => {
+    const { ctx, stored, saveMany } = context();
+    await renderPage(ctx);
+    await upload([csvRow({ amount: "1234.56" })]);
     await click("保存映射并预览");
-    const expected = {
-      ready: "success",
-      duplicate: "info",
-      excluded: "muted",
-      review: "warning",
-      error: "destructive",
-    };
-    const table = container.querySelector('table[aria-label="账单预览"]')!;
-    for (const [status, tone] of Object.entries(expected)) {
-      const summary = container.querySelector(`[data-processing-status="${status}"]`)!;
-      const badge = table.querySelector(`[data-processing-status="${status}"]`)!;
-      const background = tone === "muted" ? "bg-muted/30" : `bg-${tone}-subtle`;
-      expect(summary.classList.contains(background)).toBe(true);
-      expect(badge.classList.contains(background)).toBe(true);
-      expect(badge.textContent?.trim()).not.toBe("");
-      expect(badge.querySelector("svg")).toBeTruthy();
-    }
+    await renderPage(ctx, "de-DE", "en", "America/New_York");
+    expect(container.querySelector("h1")!.textContent).toBe("Statement import");
+    await click("Confirm import");
+    expect(saveMany).not.toHaveBeenCalled();
+    await click("Import ready rows only: 1");
+    expect(stored[0].amount).toBe("1234.56");
+    expect(stored[0].metadata!.unifiedStatementImport).toMatchObject({
+      sources: [{ amount: "1234.56", originalTime: "2025/12/31 14:23" }],
+    });
+    expect(container.textContent).toContain("Added: 1.");
+    expect(container.querySelector('[aria-current="step"]')).toBeNull();
+    await renderPage(ctx, "zh-TW", "zh-Hant", "Asia/Taipei");
+    expect(container.querySelector("h1")!.textContent).toBe("帳單匯入");
+    expect(container.textContent).toContain("已新增 1 筆");
   });
-  it("通过宿主样式的账户选择器设置映射并保存", async () => {
+  it("shows CSV error line numbers in the selected language", async () => {
+    const { ctx } = context();
+    await renderPage(ctx, "en-US", "en");
+    await upload(['bad"quote']);
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+      "Invalid CSV quoting on line 2.",
+    );
+  });
+  it("uses the existing account selector and persists mappings before review", async () => {
     const { ctx, storage } = context("{}");
-    await act(async () => root.render(<StatementImportPage ctx={ctx} />));
-    expect(currentStep()).toContain("上传");
+    await renderPage(ctx);
     await upload();
-    expect(currentStep()).toContain("映射");
-    const trigger = container.querySelector<HTMLElement>('[aria-label="账户映射：账户余额"]');
-    expect(trigger).toBeTruthy();
-    expect(trigger!.textContent).toContain("请选择");
-    expect(trigger!.textContent).not.toContain("__none__");
-    await act(async () => trigger!.click());
+    const trigger = container.querySelector<HTMLElement>('[aria-label="账户映射：账户余额"]')!;
+    expect(trigger.textContent).toContain("请选择");
+    await act(async () => trigger.click());
     const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
       (item) => item.textContent?.includes("cash"),
-    );
-    expect(option).toBeTruthy();
-    await act(async () => option!.click());
-    expect(trigger!.textContent).toContain("cash · 现金");
+    )!;
+    await act(async () => option.click());
     await click("保存映射并预览");
-    expect(currentStep()).toContain("预览确认");
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 账户余额: "cash" }));
-    expect(container.textContent).toContain("确认仅导入已就绪 1 笔");
-    const table = container.querySelector('table[aria-label="账单预览"]')!;
-    expect(Array.from(table.querySelectorAll("thead th")).map((cell) => cell.textContent)).toEqual([
-      "#",
-      "交易时间",
-      "交易对方",
-      "商品说明",
-      "来源分类",
-      "收/支",
-      "付款方式",
-      "交易状态",
-      "订单号",
-      "原金额",
-      "记账性质",
-      "确认金额",
-      "目标账户",
-      "处理状态",
-      "操作",
-    ]);
-    expect(table.querySelectorAll("tbody tr")).toHaveLength(2);
-    expect(table.querySelector("tbody tr")!.children).toHaveLength(15);
+    expect(container.querySelector('[role="grid"]')).toBeTruthy();
   });
-  it("上传、恢复映射、预览后取消，不产生账目写入", async () => {
-    const { ctx, storage, saveMany } = context();
-    await act(async () => root.render(<StatementImportPage ctx={ctx} />));
+  it("asks before discarding a preview, and dismissal preserves the statement", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
     await upload();
-    expect(container.textContent).toContain("已读取 2 条明细");
     await click("保存映射并预览");
-    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 账户余额: "cash" }));
-    expect(container.textContent).toContain("确认仅导入已就绪 1 笔");
     await click("结束 / 取消本次导入");
-    expect(container.textContent).toContain("上传支付宝交易明细");
-    expect(currentStep()).toContain("上传");
+    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
+    await click("继续编辑");
+    expect(container.querySelector('[role="grid"]')).toBeTruthy();
+    await click("结束 / 取消本次导入");
+    const discard = Array.from(
+      document.querySelector('[role="alertdialog"]')!.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("取消本次导入"))!;
+    await act(async () => discard.click());
+    expect(container.querySelector('input[type="file"]')).toBeTruthy();
     expect(saveMany).not.toHaveBeenCalled();
+    expect(ctx.router.setLeaveGuard).toHaveBeenLastCalledWith(false);
   });
-  it("确认后只提交就绪行，再次上传显示重复；重复按钮禁用", async () => {
+  it("imports ready rows once, hides result steps, and detects the next upload as duplicate", async () => {
     const { ctx, saveMany, stored } = context();
-    await act(async () => root.render(<StatementImportPage ctx={ctx} />));
+    await renderPage(ctx);
     await upload();
     await click("保存映射并预览");
+    await click("提交确认");
     await click("确认仅导入已就绪 1 笔");
     expect(stored).toHaveLength(1);
     expect(container.textContent).toContain("已新增 1 笔");
-    expect(currentStep()).toContain("导入结果");
-    expect(
-      container.querySelectorAll('[aria-label="导入进度"] [aria-current="step"]'),
-    ).toHaveLength(1);
-    const completed = Array.from(container.querySelectorAll('[aria-label="导入进度"] li')).slice(
-      0,
-      3,
-    );
-    expect(completed.every((item) => item.textContent?.includes("已完成"))).toBe(true);
-    const submit = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("确认仅导入"),
-    );
-    expect(submit!.disabled).toBe(true);
-    await click("结束 / 取消本次导入");
+    expect(container.querySelector('[aria-current="step"]')).toBeNull();
+    await click("开始新导入");
     await upload();
     await click("保存映射并预览");
-    expect(container.textContent).toContain("此订单已经导入");
+    const confirm = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("提交确认"),
+    )!;
+    expect(confirm.disabled).toBe(true);
     expect(saveMany).toHaveBeenCalledTimes(1);
   });
-  it("结果中继续处理记录时返回预览；提交失败不会进入结果步骤", async () => {
+  it("does not report an unknown write response as success", async () => {
     const { ctx, saveMany } = context();
-    await act(async () => root.render(<StatementImportPage ctx={ctx} />));
+    await renderPage(ctx);
     await upload();
     await click("保存映射并预览");
-    saveMany.mockRejectedValueOnce(new Error("test failure"));
+    await click("提交确认");
+    saveMany.mockRejectedValueOnce(new Error("lost response"));
     await click("确认仅导入已就绪 1 笔");
-    expect(currentStep()).toContain("预览确认");
-    await click("确认仅导入已就绪 1 笔");
-    expect(currentStep()).toContain("导入结果");
-    await act(async () =>
-      container.querySelector<HTMLElement>('[aria-label="第 3 行排除"]')!.click(),
-    );
-    expect(currentStep()).toContain("预览确认");
+    expect(container.textContent).toContain("结果待核对");
+    expect(container.textContent).not.toContain("导入完成");
+    await click("返回预览");
+    expect(container.querySelector('[role="grid"]')).toBeTruthy();
   });
-  it("失效映射阻止提交，支持重置并保持 RTL 与深色主题环境", async () => {
+  it("blocks unavailable mappings and supports reset under RTL and dark theme", async () => {
     document.documentElement.dir = "rtl";
     document.documentElement.classList.add("dark");
     try {
       const { ctx, storage } = context('{"账户余额":"missing"}');
-      await act(async () => root.render(<StatementImportPage ctx={ctx} />));
+      await renderPage(ctx);
       await upload();
       await click("保存映射并预览");
-      expect(container.textContent).toContain("确认仅导入已就绪 0 笔");
+      const next = Array.from(container.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("提交确认"),
+      )!;
+      expect(next.disabled).toBe(true);
       await click("返回账户映射");
       await click("重置映射");
       expect(storage.delete).toHaveBeenCalledWith(MAPPING_KEY);

@@ -1,11 +1,21 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { FormattingProvider, DirectionProvider } from "@wealthfolio/ui";
-import type { ActivityImport, AddonContext } from "@wealthfolio/addon-sdk";
+import { FormattingProvider, DirectionProvider, useLocalizationSettings } from "@wealthfolio/ui";
+import type { AddonContext } from "@wealthfolio/addon-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AntFundImportPage } from "./import-page";
 import { parseStatement, type StatementRow } from "./statement";
+import { en, zh, zhHant } from "./messages";
+
+vi.mock("@wealthfolio/addon-sdk", async (original) => ({
+  ...(await original<typeof import("@wealthfolio/addon-sdk")>()),
+  useAddonTranslation: () => {
+    const { uiLocale } = useLocalizationSettings();
+    const messages = uiLocale === "zh-Hant" ? zhHant : uiLocale === "zh" ? zh : en;
+    return { t: (key: keyof typeof en) => messages[key], language: uiLocale };
+  },
+}));
 
 vi.mock("./statement", async (original) => ({
   ...(await original<typeof import("./statement")>()),
@@ -58,6 +68,7 @@ const rows: StatementRow[] = [
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  Reflect.deleteProperty(Element.prototype, "animate");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   container = document.createElement("div");
   document.body.append(container);
@@ -70,68 +81,6 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-function context() {
-  const checkImport = vi.fn(async (rows: ActivityImport[]) =>
-    rows.map((row) => ({
-      ...row,
-      isValid: true,
-      errors: {},
-      ...(row.lineNumber === 2
-        ? { duplicateOfId: "existing", warnings: { _duplicate: ["Synthetic duplicate"] } }
-        : {}),
-    })),
-  );
-  const importRows = vi.fn(async (rows: ActivityImport[]) => ({
-    activities: rows,
-    importRunId: "synthetic-run",
-    summary: {
-      total: rows.length,
-      imported: rows.length,
-      skipped: 0,
-      duplicates: 0,
-      assetsCreated: 0,
-      success: true,
-    },
-  }));
-  const ctx = {
-    api: {
-      accounts: {
-        getAll: vi.fn(async () => [
-          {
-            id: "cny",
-            name: "Test CNY",
-            currency: "CNY",
-            accountType: "SECURITIES",
-            trackingMode: "TRANSACTIONS",
-            isActive: true,
-            isArchived: false,
-          },
-        ]),
-      },
-      market: {
-        searchTicker: vi.fn(async (code: string) => [
-          {
-            symbol: `FUND:${code}`,
-            canonicalSymbol: `FUND:${code}`,
-            longName: `New OTC ${code}`,
-            isExisting: false,
-            currency: "CNY",
-          },
-          {
-            symbol: code,
-            canonicalSymbol: code,
-            longName: `Synthetic Fund ${code}`,
-            isExisting: true,
-            existingAssetId: `asset-${code}`,
-            currency: "CNY",
-          },
-        ]),
-      },
-      activities: { checkImport, import: importRows },
-    },
-  } as unknown as AddonContext;
-  return { ctx, checkImport, importRows };
-}
 async function click(name: string, scope: ParentNode = document) {
   const button = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
     (button) => button.textContent?.trim() === name || button.getAttribute("aria-label") === name,
@@ -151,9 +100,6 @@ async function select(label: string, option: string) {
   expect(item, option).toBeTruthy();
   await act(async () => item!.click());
 }
-function currentStep() {
-  return container.querySelector('[aria-current="step"]')?.textContent;
-}
 async function mount(ctx: AddonContext, rtl = false) {
   await act(async () =>
     root.render(
@@ -166,152 +112,77 @@ async function mount(ctx: AddonContext, rtl = false) {
   );
 }
 async function upload() {
-  await select("ant-account", "Test CNY");
   const file = new File(["synthetic"], "synthetic.pdf", { type: "application/pdf" });
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, "files", { configurable: true, value: [file] });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
 }
-async function bindFunds() {
-  for (const code of ["000032", "017811"]) {
-    const row = [...container.querySelectorAll("tbody tr")].find((row) =>
-      row.textContent?.includes(code),
-    )!;
-    await click("Search", row);
-    await click("Search", document.querySelector('[role="dialog"]')!);
-    const results = document.querySelector('table[aria-label="Fund search results"]')!;
-    const buttons = results.querySelectorAll<HTMLButtonElement>("button");
-    expect(buttons[0].disabled).toBe(true);
-    await act(async () => buttons[1].click());
-  }
-}
-async function fillDividend(save = true) {
-  await click("Edit Source record #2");
-  const dialog = document.querySelector('[role="dialog"]')!;
-  const label = [...dialog.querySelectorAll("label")].find((label) =>
-    label.textContent?.includes("Final cash amount"),
-  )!;
-  const input = label.querySelector("input")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0.88");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await click(save ? "Save changes" : "Cancel", dialog);
-}
-
-describe("staged PDF import UI", () => {
-  it("uses the shared wizard, tables and themed status badges instead of native disclosure forms", async () => {
-    const { ctx, importRows } = context();
-    await mount(ctx, true);
-    expect(currentStep()).toContain("Statement PDF");
-    await upload();
-    expect(currentStep()).toContain("Identify funds");
-    expect(container.querySelector('table[aria-label="Identify funds"]')).toBeTruthy();
-    expect(container.querySelectorAll("details, summary")).toHaveLength(0);
-    await bindFunds();
-    await click("Preview and confirm");
-    expect(currentStep()).toContain("Preview and confirm");
-    const table = container.querySelector('table[aria-label="Review transactions"]')!;
-    expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
-    expect(table.querySelector('[data-processing-status="pending"]')?.className).toContain(
-      "bg-warning-subtle",
-    );
-    expect(table.querySelector('[data-processing-status="ready"]')?.className).toContain(
-      "bg-success-subtle",
-    );
-    expect(container.querySelectorAll('input[type="date"]')).toHaveLength(0);
-    expect(container.querySelector('[data-page-content="true"]')).toBeTruthy();
-    expect(importRows).not.toHaveBeenCalled();
-  });
-  it("keeps edits in a dialog, cancels without mutating rows, and requires validation before importing", async () => {
-    const { ctx, checkImport, importRows } = context();
-    await mount(ctx);
-    await upload();
-    await bindFunds();
-    await click("Preview and confirm");
-    await fillDividend(false);
-    expect(
-      container.querySelector(
-        'table[aria-label="Review transactions"] [data-processing-status="pending"]',
-      ),
-    ).toBeTruthy();
-    await fillDividend();
-    expect(
-      container.querySelector(
-        'table[aria-label="Review transactions"] [data-processing-status="pending"]',
-      ),
-    ).toBeNull();
-    expect(importRows).not.toHaveBeenCalled();
-    await click("Validate and check duplicates");
-    expect(checkImport).toHaveBeenCalledTimes(1);
-    await click("Confirm and import");
-    expect(importRows).toHaveBeenCalledTimes(1);
-    const submitted = importRows.mock.calls[0][0];
-    expect(submitted).toHaveLength(2);
-    expect(submitted.find((row) => row.activityType === "DIVIDEND")).toMatchObject({
-      amount: "0.88",
-      unitPrice: "2",
-      assetId: "asset-000032",
-    });
-    expect(submitted.some((row) => row.lineNumber === 2)).toBe(false);
-    expect(currentStep()).toContain("Import result");
-    expect(container.textContent).toContain("synthetic-run");
-  });
-
-  it("filters incomplete rows and invalidates the checked payload after an edit", async () => {
-    const { ctx, checkImport, importRows } = context();
-    await mount(ctx);
-    await upload();
-    await bindFunds();
-    await click("Preview and confirm");
-    await select("Filter by status", "Needs input");
-    expect(
-      container.querySelectorAll('table[aria-label="Review transactions"] tbody tr'),
-    ).toHaveLength(1);
-    await fillDividend();
-    await select("Filter by status", "All records");
-    await click("Validate and check duplicates");
-    await fillDividend();
-    const confirm = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Confirm and import",
-    )!;
-    expect(confirm.disabled).toBe(true);
-    expect(checkImport).toHaveBeenCalledTimes(1);
-    expect(importRows).not.toHaveBeenCalled();
-  });
-
-  it("shows a failed import and rechecks only failed activities without resubmitting successes", async () => {
-    const { ctx, checkImport, importRows } = context();
-    importRows.mockImplementationOnce(async (submitted) => ({
-      activities: submitted.map((row, index) =>
-        index === 0
-          ? { ...row, isValid: false, errors: { amount: ["Synthetic write failure"] } }
-          : row,
-      ),
-      importRunId: "partial-run",
-      summary: {
-        total: submitted.length,
-        imported: submitted.length - 1,
-        skipped: 1,
-        duplicates: 0,
-        assetsCreated: 0,
-        success: false,
+function context() {
+  const openImport = vi.fn(async () => {});
+  const setLeaveGuard = vi.fn(async () => {});
+  const ctx = {
+    router: { setLeaveGuard },
+    api: {
+      accounts: {
+        getAll: vi.fn(async () => [
+          {
+            id: "cny",
+            name: "Test CNY",
+            currency: "CNY",
+            accountType: "SECURITIES",
+            trackingMode: "TRANSACTIONS",
+            isActive: true,
+            isArchived: false,
+          },
+        ]),
       },
-    }));
+      activities: { openImport },
+    },
+  } as unknown as AddonContext;
+  return { ctx, openImport, setLeaveGuard };
+}
+describe("PDF preparation UI", () => {
+  it("hands drafts to the host instead of searching or importing directly", async () => {
+    const { ctx, openImport, setLeaveGuard } = context();
+    vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
+    await mount(ctx, true);
+    await upload();
+    await select("CNY investment account", "Test CNY");
+    expect(setLeaveGuard).toHaveBeenCalledWith(true);
+    await click("Next step");
+    expect(openImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLabel: "synthetic.pdf",
+        accountId: "cny",
+        rows: [
+          expect.objectContaining({
+            sourceLine: 1,
+            activity: expect.objectContaining({ symbol: "000032", amount: "100" }),
+          }),
+        ],
+      }),
+    );
+  });
+  it("keeps the statement when cancellation is dismissed", async () => {
+    const { ctx, openImport } = context();
+    vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
     await mount(ctx);
     await upload();
-    await bindFunds();
-    await click("Preview and confirm");
-    await fillDividend();
-    await click("Validate and check duplicates");
-    await click("Confirm and import");
-    expect(container.textContent).toContain("Synthetic write failure");
-    await click("Recheck failed rows only");
-    expect(checkImport.mock.calls[1][0].map((row) => row.lineNumber)).toEqual([4]);
-    expect(
-      container.querySelectorAll('table[aria-label="Review transactions"] tbody tr'),
-    ).toHaveLength(1);
-    await click("Confirm and import");
-    expect(importRows.mock.calls[1][0].map((row) => row.lineNumber)).toEqual([4]);
+    await click("Cancel");
+    await click("Continue editing", document.querySelector('[role="alertdialog"]')!);
+    expect(container.textContent).toContain("Correct statement-specific fields");
+    expect(openImport).not.toHaveBeenCalled();
+  });
+  it("retains preparation after a failed handoff and allows retry", async () => {
+    const { ctx, openImport } = context();
+    vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
+    openImport.mockRejectedValueOnce(new Error("failed"));
+    await mount(ctx);
+    await upload();
+    await select("CNY investment account", "Test CNY");
+    await click("Next step");
+    expect(container.textContent).toContain("Operation failed");
+    await click("Next step");
+    expect(openImport).toHaveBeenCalledTimes(2);
   });
 });

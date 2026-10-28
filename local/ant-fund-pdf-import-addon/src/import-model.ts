@@ -1,9 +1,5 @@
 import Decimal from "decimal.js";
-import type {
-  ActivityImport,
-  SymbolSearchResult,
-  ImportActivitiesResult,
-} from "@wealthfolio/addon-sdk";
+import type { OpenActivityImportRequest } from "@wealthfolio/addon-sdk";
 import { compact, StatementError, type StatementRow } from "./statement";
 
 export interface DraftLeg {
@@ -20,19 +16,6 @@ export interface DraftRow {
   legs: DraftLeg[];
   excluded: boolean;
 }
-export type FundBinding = Pick<
-  ActivityImport,
-  | "symbol"
-  | "assetId"
-  | "symbolName"
-  | "exchangeMic"
-  | "quoteCcy"
-  | "instrumentType"
-  | "quoteMode"
-  | "providerId"
-  | "providerSymbol"
->;
-
 function isCalendarDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`);
   return (
@@ -106,90 +89,46 @@ export function unitPrice(leg: DraftLeg) {
   return gross.div(quantity).toDecimalPlaces(12).toString();
 }
 
-export function requiresExistingAsset(result: SymbolSearchResult) {
-  return !result.existingAssetId && !(result.canonicalExchangeMic || result.exchangeMic)?.trim();
-}
-
-export function bindingFromSearch(result: SymbolSearchResult): FundBinding {
-  if (requiresExistingAsset(result)) throw new StatementError("createAsset");
-  return {
-    assetId: result.existingAssetId,
-    symbol: result.canonicalSymbol || result.symbol,
-    symbolName: result.longName || result.shortName,
-    exchangeMic: result.canonicalExchangeMic || result.exchangeMic,
-    quoteCcy: result.currency,
-    instrumentType: "EQUITY",
-    quoteMode: result.isExisting ? undefined : "MARKET",
-    providerId: result.providerId,
-    providerSymbol: result.providerSymbol,
-  };
-}
-
-export function toActivities(
+export function toImportRequest(
   drafts: DraftRow[],
-  bindings: Record<string, FundBinding>,
   accountId: string,
-): ActivityImport[] {
+  sourceLabel: string,
+): OpenActivityImportRequest {
   if (!accountId) throw new StatementError("pending");
-  const rows: ActivityImport[] = [];
-  for (const draft of drafts) {
-    if (draft.excluded) continue;
-    if (!draft.legs.length) throw new StatementError("pending", String(draft.source.line));
-    for (const [index, leg] of draft.legs.entries()) {
-      const binding = bindings[leg.code];
-      if (!binding?.symbol && !binding?.assetId)
-        throw new StatementError("asset", String(draft.source.line));
-      if (!isCalendarDate(leg.date)) throw new StatementError("date", String(draft.source.line));
-      rows.push({
-        ...binding,
-        accountId,
-        currency: "CNY",
-        activityType: leg.activityType,
-        subtype: leg.activityType === "DIVIDEND" ? "DRIP" : undefined,
-        date: `${leg.date}T00:00:00Z`,
-        quantity: leg.quantity,
-        amount: leg.amount,
-        fee: leg.fee,
-        unitPrice: unitPrice(leg),
-        isValid: true,
-        isDraft: false,
-        forceImport: false,
-        lineNumber: draft.source.line * 2 + index,
-        comment: `Ant Fund order:${compact(draft.source.cells[0])}`,
+  if (!drafts.some((draft) => !draft.excluded)) throw new StatementError("empty");
+  return {
+    sourceLabel,
+    accountId,
+    rows: drafts.flatMap((draft) => {
+      if (!draft.excluded && !draft.legs.length)
+        throw new StatementError("pending", String(draft.source.line));
+      return (draft.legs.length ? draft.legs : [undefined]).map((leg) => {
+        if (leg && !draft.excluded && !isCalendarDate(leg.date))
+          throw new StatementError("date", String(draft.source.line));
+        const price = leg && !draft.excluded ? unitPrice(leg) : undefined;
+        return {
+          sourceLine: draft.source.line,
+          rawRow: draft.source.cells,
+          excluded: draft.excluded,
+          activity: {
+            accountId,
+            currency: "CNY",
+            activityType: leg?.activityType ?? "BUY",
+            symbol: leg?.code,
+            symbolName: leg?.name,
+            date: leg?.date ? leg.date + "T00:00:00Z" : "",
+            amount: leg?.amount,
+            quantity: leg?.quantity,
+            fee: leg?.fee,
+            unitPrice: price,
+            subtype: leg?.activityType === "DIVIDEND" ? "DRIP" : undefined,
+            instrumentType: "EQUITY",
+            isDraft: true,
+            isValid: false,
+            comment: "Ant Fund order:" + compact(draft.source.cells[0]),
+          },
+        };
       });
-    }
-  }
-  if (!rows.length) throw new StatementError("empty");
-  return rows;
-}
-
-export function isDuplicate(row: ActivityImport) {
-  return !!(
-    row.duplicateOfId ||
-    row.duplicateOfLineNumber != null ||
-    row.warnings?._duplicate?.length
-  );
-}
-
-export function sourceRowNumber(lineNumber: number) {
-  return Math.floor(lineNumber / 2);
-}
-export function hasErrors(row: ActivityImport) {
-  return (
-    (!row.isValid && !isDuplicate(row)) ||
-    Object.values(row.errors ?? {}).some((errors) => errors.length > 0)
-  );
-}
-export function rowsToImport(rows: ActivityImport[]) {
-  if (rows.some(hasErrors)) throw new StatementError("validation");
-  return rows
-    .filter((row) => !isDuplicate(row) || row.forceImport)
-    .map((row) => ({ ...row, isValid: true }));
-}
-
-export function reconcileResult(submitted: ActivityImport[], result: ImportActivitiesResult) {
-  // Only returned, explicitly failed rows are retryable; uncertain responses must be checked again.
-  return result.activities
-    .filter((row) => hasErrors(row))
-    .map((row) => ({ ...submitted.find((input) => input.lineNumber === row.lineNumber), ...row }));
+    }),
+  };
 }

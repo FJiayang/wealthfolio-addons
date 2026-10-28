@@ -1,12 +1,12 @@
 {
   "id": "unified-statement-import-addon",
-  "name": "账单导入",
-  "version": "0.1.0",
+  "name": "账单导入 / Statement Import",
+  "version": "0.1.1",
   "description": "本地解析支付宝账单，预览、映射账户并检测重复后保存。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
-  "sdkVersion": "3.11.0",
-  "minWealthfolioVersion": "3.11.0",
+  "sdkVersion": "3.11.1",
+  "minWealthfolioVersion": "3.11.1",
   "enabled": true,
   "contributes": {
     "routes": [{ "id": "statement-import" }],
@@ -15,7 +15,7 @@
         {
           "id": "statement-import",
           "route": "statement-import",
-          "label": "账单导入",
+          "label": "账单导入 / Statement Import",
           "icon": "receipt",
           "order": 230
         }
@@ -23,8 +23,8 @@
     }
   },
   "hostDependencies": {
-    "@wealthfolio/addon-sdk": "^3.11.0",
-    "@wealthfolio/ui": "^3.11.0",
+    "@wealthfolio/addon-sdk": "^3.11.1",
+    "@wealthfolio/ui": "^3.11.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
