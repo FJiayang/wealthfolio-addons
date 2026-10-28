@@ -14,8 +14,8 @@ it("validates the manifest and the actual installable archive", () => {
     warnings: [],
   });
   expect(manifest.version).toBe(pkg.version);
-  expect(manifest.sdkVersion).toBe("3.11.1");
-  expect(manifest.minWealthfolioVersion).toBe("3.11.1");
+  expect(manifest.sdkVersion).toBe("3.11.0");
+  expect(manifest.minWealthfolioVersion).toBe("3.11.0");
   expect(manifest.permissions.map((permission) => permission.category)).toEqual([
     "accounts",
     "activities",

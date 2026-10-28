@@ -5,8 +5,8 @@
   "description": "本地解析支付宝账单，预览、映射账户并检测重复后保存。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
-  "sdkVersion": "3.11.1",
-  "minWealthfolioVersion": "3.11.1",
+  "sdkVersion": "3.11.0",
+  "minWealthfolioVersion": "3.11.0",
   "enabled": true,
   "contributes": {
     "routes": [{ "id": "statement-import" }],
@@ -23,8 +23,8 @@
     }
   },
   "hostDependencies": {
-    "@wealthfolio/addon-sdk": "^3.11.1",
-    "@wealthfolio/ui": "^3.11.1",
+    "@wealthfolio/addon-sdk": "^3.11.0",
+    "@wealthfolio/ui": "^3.11.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

@@ -25,7 +25,7 @@ it("安装包只有运行文件和说明，没有源账单、测试及商店元�
     ),
   ).toBe(false);
   const manifest = JSON.parse(strFromU8(files["manifest.json"]));
-  expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.11.1");
+  expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.11.0");
   expect(
     manifest.permissions.find(
       (permission: { category: string }) => permission.category === "activities",
