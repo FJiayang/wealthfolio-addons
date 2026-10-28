@@ -24,7 +24,6 @@ export interface Submission {
   outcome: "changed" | "empty" | "success" | "partial" | "uncertain";
   preview: PreviewRow[];
   message: string;
-  messageValues?: Record<string, number>;
   created: number;
   unconfirmed?: number;
 }
@@ -87,16 +86,13 @@ export function createSubmitter(host: ImportHost) {
           outcome: "partial",
           preview: refreshed,
           created: response.created.length,
-          message:
-            "保存未完整完成：已确认新增 {{count}} 笔，错误 {{errors}} 条。请核对刷新后的预览；已有账目不会被覆盖。",
-          messageValues: { count: response.created.length, errors: response.errors.length },
+          message: `保存未完整完成：已确认新增 ${response.created.length} 笔，错误 ${response.errors.length} 条。请核对刷新后的预览；已有账目不会被覆盖。`,
         };
       return {
         outcome: "success",
         preview: refreshed,
         created: response.created.length,
-        message: "已新增 {{count}} 笔。重复、排除及未确认记录未提交。",
-        messageValues: { count: response.created.length },
+        message: `已新增 ${response.created.length} 笔。重复、排除及未确认记录未提交。`,
       };
     } finally {
       busy = false;

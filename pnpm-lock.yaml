@@ -48,6 +48,9 @@ importers:
       '@wealthfolio/addon-sdk':
         specifier: link:../../../wealthfolio/packages/addon-sdk
         version: link:../../../wealthfolio/packages/addon-sdk
+      '@wealthfolio/import-wizard-ui':
+        specifier: workspace:*
+        version: link:../../packages/import-wizard-ui
       '@wealthfolio/ui':
         specifier: link:../../../wealthfolio/packages/ui
         version: link:../../../wealthfolio/packages/ui
@@ -99,6 +102,9 @@ importers:
       '@wealthfolio/addon-sdk':
         specifier: link:../../../wealthfolio/packages/addon-sdk
         version: link:../../../wealthfolio/packages/addon-sdk
+      '@wealthfolio/import-wizard-ui':
+        specifier: workspace:*
+        version: link:../../packages/import-wizard-ui
       '@wealthfolio/ui':
         specifier: link:../../../wealthfolio/packages/ui
         version: link:../../../wealthfolio/packages/ui
@@ -291,6 +297,33 @@ importers:
       vite:
         specifier: ^7.3.2
         version: 7.3.3(@types/node@20.19.41)(jiti@2.7.0)(lightningcss@1.32.0)
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@20.19.41)(happy-dom@20.14.0)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  packages/import-wizard-ui:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.13
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      '@wealthfolio/ui':
+        specifier: link:../../../wealthfolio/packages/ui
+        version: link:../../../wealthfolio/packages/ui
+      happy-dom:
+        specifier: ^20.14.0
+        version: 20.14.0
+      react:
+        specifier: link:../../../wealthfolio/apps/frontend/node_modules/react
+        version: link:../../../wealthfolio/apps/frontend/node_modules/react
+      react-dom:
+        specifier: link:../../../wealthfolio/apps/frontend/node_modules/react-dom
+        version: link:../../../wealthfolio/apps/frontend/node_modules/react-dom
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
       vitest:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.41)(happy-dom@20.14.0)(jiti@2.7.0)(lightningcss@1.32.0)

@@ -28,6 +28,13 @@ it("validates the manifest and the actual installable archive", () => {
   expect(JSON.parse(strFromU8(archive["manifest.json"]))).toEqual(manifest);
   expect(archive[`dist/${manifest.main.split("/").at(-1)}`]).toBeDefined();
   expect(archive["dist/ant-fund-pdf-import-addon.css"]).toBeDefined();
+  const code = strFromU8(archive["dist/addon.js"]);
+  expect(code).not.toMatch(/from\s*["']@wealthfolio\/import-wizard-ui["']/);
+  for (const imported of code.matchAll(/import\s*\{([^}]+)\}\s*from\s*["']@wealthfolio\/ui["']/g))
+    expect(imported[1]).not.toMatch(
+      /\b(ImportWizardLayout|ImportResultSummary|FileDropzone|StepNavigation|WizardStepIndicator|CancelConfirmationDialog)\b/,
+    );
+  expect(strFromU8(archive["dist/ant-fund-pdf-import-addon.css"])).toContain(".grid-cols-2");
   for (const resource of PDF_RESOURCES)
     expect(archive[`dist/assets/pdf/${resource}`]?.length).toBeGreaterThan(0);
   expect(archive["dist/assets/pdf/standard_fonts/LICENSE_LIBERATION"]).toBeDefined();

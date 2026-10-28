@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, useMemo } from "react";
-import { useAddonTranslation, type Account, type AddonContext } from "@wealthfolio/addon-sdk";
+import {
+  ImportWizardLayout,
+  FileDropzone,
+  WizardStepIndicator,
+  StepNavigation,
+  CancelConfirmationDialog,
+  ImportStatusCards,
+} from "@wealthfolio/import-wizard-ui";
+import { useEffect, useRef, useState, useMemo, type CSSProperties } from "react";
+import { type Account, type AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Alert,
   AlertDescription,
@@ -18,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  Icons,
   Page,
   PageContent,
   PageHeader,
@@ -35,11 +44,6 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-  FileDropzone,
-  ImportWizardLayout,
-  StepNavigation,
-  WizardStepIndicator,
-  CancelConfirmationDialog,
   MoneyInput,
   QuantityInput,
   DataGrid,
@@ -56,13 +60,9 @@ import {
   type DraftLeg,
   type DraftRow,
 } from "./import-model";
-import type { MessageKey } from "./messages";
-
-type Translate = (key: MessageKey) => string;
+import { messages } from "./messages";
 
 export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
-  const { t: translate } = useAddonTranslation();
-  const t: Translate = (key) => translate(key);
   const { formatDecimal } = useNumberFormatting();
   const dir = useDirection();
   const n = (value: number) => formatDecimal(value, { maximumFractionDigits: 0 });
@@ -98,7 +98,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
           );
       })
       .catch(() => {
-        if (mounted.current) setError(t("unknown"));
+        if (mounted.current) setError(messages.unknown);
       });
     return () => {
       mounted.current = false;
@@ -111,10 +111,10 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
   }, [ctx, drafts.length]);
 
   function errorMessage(cause: unknown) {
-    if (!(cause instanceof StatementError)) return t("unknown");
+    if (!(cause instanceof StatementError)) return messages.unknown;
     const key =
       cause.code === "date" ? "dateError" : cause.code === "amount" ? "amountError" : cause.code;
-    return t(key) + (cause.location ? " (#" + cause.location + ")" : "");
+    return messages[key] + (cause.location ? " (#" + cause.location + ")" : "");
   }
 
   async function upload(selected: File | null) {
@@ -166,7 +166,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
     setError("");
     try {
       await ctx.api.activities.openImport(
-        toImportRequest(drafts, accountId, file?.name ?? t("title")),
+        toImportRequest(drafts, accountId, file?.name ?? messages.title),
       );
     } catch (cause) {
       setError(errorMessage(cause));
@@ -179,25 +179,25 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
     () => [
       {
         id: "source",
-        header: t("sourceRecord"),
+        header: messages.sourceRecord,
         accessorFn: (row: DraftRow) => row.source.line,
         size: 100,
       },
       {
         id: "fund",
-        header: t("fundName"),
+        header: messages.fundName,
         accessorFn: (row: DraftRow) => row.source.cells[3],
         size: 220,
       },
       {
         id: "type",
-        header: t("type"),
+        header: messages.type,
         accessorFn: (row: DraftRow) => row.source.cells[2],
         size: 160,
       },
       {
         id: "status",
-        header: () => t("status"),
+        header: () => messages.status,
         cell: ({ row }: { row: { original: DraftRow } }) => (
           <Badge
             variant={
@@ -208,20 +208,22 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                   : "warning-subtle"
             }
           >
-            {t(
-              row.original.excluded
-                ? "excluded"
-                : row.original.legs.length
-                  ? "validRows"
-                  : "pendingRows",
-            )}
+            {
+              messages[
+                row.original.excluded
+                  ? "excluded"
+                  : row.original.legs.length
+                    ? "validRows"
+                    : "pendingRows"
+              ]
+            }
           </Badge>
         ),
         size: 130,
       },
       {
         id: "actions",
-        header: () => t("actions"),
+        header: () => messages.actions,
         cell: ({ row }: { row: { original: DraftRow } }) => (
           <Button
             size="sm"
@@ -234,16 +236,17 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
               })
             }
           >
-            {t("edit")}
+            {messages.edit}
           </Button>
         ),
         size: 100,
       },
     ],
-    [translate, busy, drafts],
+    [busy, drafts],
   );
   const grid = useDataGrid({
     data: drafts,
+    rowHeight: "medium",
     columns,
     getRowId: (row) => String(row.source.line),
     readOnly: true,
@@ -257,10 +260,10 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
     <div className="ant-fund-import h-dvh min-h-0">
       <Page className="flex h-full min-h-0 flex-col">
         <PageHeader
-          heading={t("title")}
+          heading={messages.title}
           actions={
             <Button variant="ghost" disabled={busy || !file} onClick={() => setConfirmOpen(true)}>
-              {t("cancel")}
+              {messages.cancel}
             </Button>
           }
         />
@@ -272,10 +275,10 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
             <ImportWizardLayout
               steps={
                 <WizardStepIndicator
-                  label={t("importProgress")}
+                  label={messages.importProgress}
                   steps={[
-                    { id: "upload", label: t("upload") },
-                    { id: "prepare", label: t("review") },
+                    { id: "upload", label: messages.upload },
+                    { id: "prepare", label: messages.review },
                   ]}
                   currentStep={step}
                 />
@@ -290,14 +293,14 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                   canGoBack={step !== "upload" && !busy}
                   canGoNext={!busy && drafts.length > 0 && (step === "upload" || !!accountId)}
                   isNextLoading={busy}
-                  nextLabel={t("nextStep")}
-                  nextLoadingLabel={t("parsing")}
-                  backLabel={t("previousStep")}
+                  nextLabel={messages.nextStep}
+                  nextLoadingLabel={messages.parsing}
+                  backLabel={messages.previousStep}
                 />
               }
             >
               {error && (
-                <AlertFeedback variant="error" title={t("failed")}>
+                <AlertFeedback variant="error" title={messages.failed}>
                   {error}
                 </AlertFeedback>
               )}
@@ -312,25 +315,25 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                   accept=".pdf,application/pdf"
                   error={error}
                   labels={{
-                    choose: t("choosePdf"),
-                    remove: t("cancel"),
-                    processing: progress || t("parsing"),
-                    drop: t("drop"),
-                    hint: t("pdfHint"),
+                    choose: messages.choosePdf,
+                    remove: messages.cancel,
+                    processing: progress || messages.parsing,
+                    drop: messages.drop,
+                    hint: messages.pdfHint,
                   }}
                 />
               ) : (
                 <div className="space-y-4">
                   <label className="block space-y-2">
-                    <span>{t("account")}</span>
+                    <span>{messages.account}</span>
                     <Select
                       value={accountId}
                       onValueChange={(id) => setAccountId(id ?? "")}
                       disabled={busy}
                       items={accounts.map((a) => ({ value: a.id, label: a.name }))}
                     >
-                      <SelectTrigger aria-label={t("account")}>
-                        <SelectValue placeholder={t("select")} />
+                      <SelectTrigger aria-label={messages.account}>
+                        <SelectValue placeholder={messages.select} />
                       </SelectTrigger>
                       <SelectContent>
                         {accounts.map((a) => (
@@ -341,10 +344,47 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                       </SelectContent>
                     </Select>
                   </label>
-                  <AlertFeedback variant="warning" title={t("review")}>
-                    {t("handoffHint")}
+                  <AlertFeedback variant="warning" title={messages.review}>
+                    {messages.handoffHint}
                   </AlertFeedback>
-                  <DataGrid {...grid} dir={dir} height={420} />
+                  <ImportStatusCards
+                    items={[
+                      {
+                        label: messages.validRows,
+                        value: n(
+                          drafts.filter((draft) => !draft.excluded && draft.legs.length > 0).length,
+                        ),
+                        tone: "success",
+                        icon: <Icons.CheckCircle className="size-4" />,
+                      },
+                      {
+                        label: messages.pendingRows,
+                        value: n(
+                          drafts.filter((draft) => !draft.excluded && draft.legs.length === 0)
+                            .length,
+                        ),
+                        tone: "warning",
+                        icon: <Icons.AlertCircle className="size-4" />,
+                      },
+                      {
+                        label: messages.excluded,
+                        value: n(drafts.filter((draft) => draft.excluded).length),
+                        tone: "muted",
+                        icon: <Icons.MinusCircle className="size-4" />,
+                      },
+                    ]}
+                  />
+                  <DataGrid
+                    {...grid}
+                    dir={dir}
+                    height={420}
+                    className="import-wizard-grid"
+                    style={
+                      {
+                        "--import-wizard-grid-width": `${grid.table.getTotalSize()}px`,
+                      } as CSSProperties
+                    }
+                  />
                 </div>
               )}
             </ImportWizardLayout>
@@ -354,10 +394,10 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
           onConfirm={reset}
-          title={t("cancelTitle")}
-          description={t("cancelDescription")}
-          continueLabel={t("continue")}
-          cancelLabel={t("cancel")}
+          title={messages.cancelTitle}
+          description={messages.cancelDescription}
+          continueLabel={messages.continue}
+          cancelLabel={messages.cancel}
         />
         <Dialog
           open={!!editing}
@@ -369,17 +409,17 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
               <DialogHeader>
                 <DialogTitle>
-                  {t("edit")} · {t("sourceRecord")} #{n(editing.draft.source.line)}
+                  {messages.edit} · {messages.sourceRecord} #{n(editing.draft.source.line)}
                 </DialogTitle>
                 <DialogDescription>
-                  {compact(editing.draft.source.cells[3])} · {t("pages")}:{" "}
+                  {compact(editing.draft.source.cells[3])} · {messages.pages}:{" "}
                   {editing.draft.source.pages.map(n).join(", ")}
                 </DialogDescription>
               </DialogHeader>
               <Tabs defaultValue={"edit"}>
                 <TabsList>
-                  <TabsTrigger value="edit">{t("edit")}</TabsTrigger>
-                  <TabsTrigger value="source">{t("source")}</TabsTrigger>
+                  <TabsTrigger value="edit">{messages.edit}</TabsTrigger>
+                  <TabsTrigger value="source">{messages.source}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="edit" className="space-y-4">
                   <label className="flex items-center gap-2">
@@ -390,12 +430,12 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                         setEditing({ ...editing, draft: { ...editing.draft, excluded } })
                       }
                     />
-                    {t("exclude")}
+                    {messages.exclude}
                   </label>
                   {!editing.draft.legs.length && (
                     <Alert>
                       <AlertDescription className="space-y-3">
-                        <p>{t("conversionHint")}</p>
+                        <p>{messages.conversionHint}</p>
                         <Button
                           variant="outline"
                           disabled={blocked || editing.draft.excluded}
@@ -429,7 +469,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                             });
                           }}
                         >
-                          {t("conversion")}
+                          {messages.conversion}
                         </Button>
                       </AlertDescription>
                     </Alert>
@@ -438,7 +478,6 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                     <LegEditor
                       key={legIndex}
                       leg={leg}
-                      t={t}
                       disabled={blocked || editing.draft.excluded}
                       onChange={(updated) =>
                         setEditing({
@@ -455,7 +494,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                   ))}
                 </TabsContent>
                 <TabsContent value="source">
-                  <Table aria-label={t("source")}>
+                  <Table aria-label={messages.source}>
                     <TableBody>
                       {editing.draft.source.cells.map((cell, i) => (
                         <TableRow key={i}>
@@ -471,7 +510,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
               </Tabs>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEditing(null)}>
-                  {t("cancel")}
+                  {messages.cancel}
                 </Button>
                 {
                   <Button
@@ -481,7 +520,7 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
                       setEditing(null);
                     }}
                   >
-                    {t("save")}
+                    {messages.save}
                   </Button>
                 }
               </DialogFooter>
@@ -495,12 +534,10 @@ export function AntFundImportPage({ ctx }: { ctx: AddonContext }) {
 
 function LegEditor({
   leg,
-  t,
   disabled,
   onChange,
 }: {
   leg: DraftLeg;
-  t: Translate;
   disabled: boolean;
   onChange: (leg: DraftLeg) => void;
 }) {
@@ -514,29 +551,29 @@ function LegEditor({
   return (
     <Card className="gap-0">
       <CardHeader className="py-3">
-        <CardTitle className="text-sm">{t(leg.activityType)}</CardTitle>
+        <CardTitle className="text-sm">{messages[leg.activityType]}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4 pb-4 sm:grid-cols-3">
         <label className="space-y-1">
-          <span className="text-sm">{t("type")}</span>
+          <span className="text-sm">{messages.type}</span>
           <Select
             disabled={disabled}
             value={leg.activityType}
             items={(["BUY", "SELL", "DIVIDEND"] as const).map((value) => ({
               value,
-              label: t(value),
+              label: messages[value],
             }))}
             onValueChange={(value) => {
               if (value) onChange({ ...leg, activityType: value as DraftLeg["activityType"] });
             }}
           >
-            <SelectTrigger aria-label={t("type")}>
+            <SelectTrigger aria-label={messages.type}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {(["BUY", "SELL", "DIVIDEND"] as const).map((value) => (
                 <SelectItem key={value} value={value}>
-                  {t(value)}
+                  {messages[value]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -544,7 +581,7 @@ function LegEditor({
         </label>
         {(["code", "date", "amount", "quantity", "fee"] as const).map((key) => (
           <label key={key} className="space-y-1">
-            <span className="text-sm">{t(key)}</span>
+            <span className="text-sm">{messages[key]}</span>
             {key === "amount" || key === "fee" ? (
               <MoneyInput
                 disabled={disabled}
@@ -568,7 +605,7 @@ function LegEditor({
           </label>
         ))}
         <p className="text-muted-foreground text-xs sm:col-span-3">
-          {t("price")}:{" "}
+          {messages.price}:{" "}
           <bdi>{price ? formatDecimal(price, { maximumFractionDigits: 12 }) : "—"}</bdi>
         </p>
       </CardContent>

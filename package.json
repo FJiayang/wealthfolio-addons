@@ -2,12 +2,12 @@
   "name": "wealthfolio-addons",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "packageManager": "pnpm@10.33.4",
   "workspaces": [
     "official/*",
-    "local/*"
+    "local/*",
+    "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "build:official": "pnpm -r --filter './official/*' build",
     "bundle:official": "pnpm -r --filter './official/*' bundle",
@@ -19,10 +19,11 @@
     "release:official": "node scripts/release-official.mjs",
     "generate:readme": "node scripts/generate-readme.mjs",
     "generate": "pnpm generate:readme",
-    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test && pnpm --filter ant-fund-pdf-import-addon type-check && pnpm --filter ant-fund-pdf-import-addon test"
+    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test && pnpm --filter ant-fund-pdf-import-addon type-check && pnpm --filter ant-fund-pdf-import-addon test && pnpm --filter @wealthfolio/import-wizard-ui type-check && pnpm --filter @wealthfolio/import-wizard-ui test && pnpm --filter unified-statement-import-addon type-check && pnpm --filter unified-statement-import-addon test"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
-  }
+  },
+  "packageManager": "pnpm@10.33.4"
 }

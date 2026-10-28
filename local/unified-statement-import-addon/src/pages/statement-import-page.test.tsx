@@ -1,30 +1,17 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Account, AddonContext, Activity, ActivityBulkMutationRequest } from "@wealthfolio/addon-sdk";
+import type {
+  Account,
+  AddonContext,
+  Activity,
+  ActivityBulkMutationRequest,
+} from "@wealthfolio/addon-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { MAPPING_KEY } from "../import/ledger";
-import { FormattingProvider, useLocalizationSettings } from "@wealthfolio/ui";
-import { translations } from "../i18n";
-
-vi.mock("@wealthfolio/addon-sdk", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@wealthfolio/addon-sdk")>()),
-  useAddonTranslation: () => {
-    const { uiLocale } = useLocalizationSettings();
-    return {
-      language: uiLocale,
-      t: (key: string, options: Record<string, unknown> = {}) => {
-        const value = translations[uiLocale]?.[key] ?? translations.en[key] ?? key;
-        return String(value).replace(/\{\{(\w+)\}\}/g, (_, name: string) =>
-          String(options[name] ?? ""),
-        );
-      },
-    };
-  },
-}));
-
+import { FormattingProvider } from "@wealthfolio/ui";
 let container: HTMLDivElement;
 let root: Root;
 async function renderPage(
@@ -64,7 +51,9 @@ function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Acc
   const stored: Activity[] = [];
   const storage = {
     get: vi.fn(async () => saved),
-    set: vi.fn(async (_key: string, value: string) => { saved = value; }),
+    set: vi.fn(async (_key: string, value: string) => {
+      saved = value;
+    }),
     delete: vi.fn(async () => {}),
   };
   const saveMany = vi.fn(async ({ creates = [] }: ActivityBulkMutationRequest) => {
@@ -106,19 +95,30 @@ describe("shared statement wizard", () => {
     const { ctx, storage, stored } = context("{}", [wallet]);
     await renderPage(ctx);
     await upload([csvRow({ method: "余额宝" })]);
-    expect(container.querySelector('[aria-label="账户映射：余额宝"]')!.textContent).toContain("余额宝");
+    expect(container.querySelector('[aria-label="账户映射：余额宝"]')!.textContent).toContain(
+      "余额宝",
+    );
     expect(container.textContent).toContain("自动识别");
     await click("保存映射并预览");
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 余额宝: "yuebao" }));
     await click("提交确认");
     await click("确认仅导入已就绪 1 笔");
-    expect(stored[0]).toMatchObject({ accountId: "yuebao", activityType: "WITHDRAWAL", currency: "CNY", amount: "12.30" });
+    expect(stored[0]).toMatchObject({
+      accountId: "yuebao",
+      activityType: "WITHDRAWAL",
+      currency: "CNY",
+      amount: "12.30",
+    });
   });
 
   it("无名称候选时可从宿主返回的全部账户手动选择", async () => {
     const accounts = [
       { ...account("usd"), name: "美元账户", currency: "USD" },
-      { ...account("securities", "SECURITIES"), name: "投资账户", trackingMode: "HOLDINGS" as const },
+      {
+        ...account("securities", "SECURITIES"),
+        name: "投资账户",
+        trackingMode: "HOLDINGS" as const,
+      },
       { ...account("crypto", "CRYPTOCURRENCY"), name: "数字资产" },
       { ...account("inactive"), name: "停用账户", isActive: false },
       { ...account("archived"), name: "归档账户", isArchived: true },
@@ -128,11 +128,16 @@ describe("shared statement wizard", () => {
     await renderPage(ctx);
     await upload([csvRow({ method: "无法识别的付款方式" })]);
     expect(container.querySelector('[aria-label="推荐账户"]')).toBeNull();
-    const trigger = container.querySelector<HTMLElement>('[aria-label="账户映射：无法识别的付款方式"]')!;
+    const trigger = container.querySelector<HTMLElement>(
+      '[aria-label="账户映射：无法识别的付款方式"]',
+    )!;
     await act(async () => trigger.click());
     const options = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
-    for (const account of accounts) expect(options.some((option) => option.textContent?.includes(account.name))).toBe(true);
-    await act(async () => options.find((option) => option.textContent?.includes("投资账户"))!.click());
+    for (const account of accounts)
+      expect(options.some((option) => option.textContent?.includes(account.name))).toBe(true);
+    await act(async () =>
+      options.find((option) => option.textContent?.includes("投资账户"))!.click(),
+    );
     await click("保存映射并预览");
     await click("提交确认");
     await click("确认仅导入已就绪 1 笔");
@@ -141,21 +146,27 @@ describe("shared statement wizard", () => {
 
   it("预填唯一高置信账户，展示理由，确认后保存并在下次上传复用", async () => {
     const method = "招商银行信用卡(1234)";
-    const card = { ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" };
+    const card = {
+      ...account("card", "CREDIT_CARD"),
+      name: "招商银行信用卡",
+      accountNumber: "1234",
+    };
     const { ctx, storage, saveMany } = context("{}", [card]);
     await renderPage(ctx);
     await upload([csvRow({ method })]);
-    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(card.name);
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
+      card.name,
+    );
     expect(container.textContent).toContain("自动识别");
     expect(container.querySelector('[aria-label="推荐账户"]')!.textContent).toContain("卡尾号一致");
     expect(storage.set).not.toHaveBeenCalled();
     expect(saveMany).not.toHaveBeenCalled();
     await renderPage(ctx, "en-US", "en");
-    expect(container.textContent).toContain("Automatically matched");
-    expect(container.textContent).toContain("Matching card suffix");
+    expect(container.textContent).toContain("自动识别");
+    expect(container.textContent).toContain("卡尾号一致");
     await renderPage(ctx, "zh-TW", "zh-Hant");
-    expect(container.textContent).toContain("自動識別");
-    expect(container.textContent).toContain("卡尾號一致");
+    expect(container.textContent).toContain("自动识别");
+    expect(container.textContent).toContain("卡尾号一致");
     await renderPage(ctx);
     await click("保存映射并预览");
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ [method]: "card" }));
@@ -166,7 +177,11 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("已保存");
     await click("保存映射并预览");
     expect(saveMany).toHaveBeenCalledTimes(1);
-    expect(Array.from(container.querySelectorAll("dl > div")).find((item) => item.querySelector("dt")?.textContent === "重复")!.querySelector("dd")!.textContent).toBe("1");
+    expect(
+      Array.from(container.querySelectorAll("dl > div"))
+        .find((item) => item.querySelector("dt")?.textContent === "重复")!
+        .querySelector("dd")!.textContent,
+    ).toBe("1");
   });
 
   it("多个高置信候选不自动选择，候选之外的人工选择仍可使用", async () => {
@@ -180,7 +195,9 @@ describe("shared statement wizard", () => {
     expect(trigger.textContent).toContain("请选择");
     expect(container.querySelectorAll('[aria-label="推荐账户"] li')).toHaveLength(2);
     await act(async () => trigger.click());
-    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((item) => item.textContent?.includes("cash"))!;
+    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (item) => item.textContent?.includes("cash"),
+    )!;
     await act(async () => option.click());
     expect(trigger.textContent).toContain("cash");
     expect(container.textContent).toContain("人工选择");
@@ -194,7 +211,9 @@ describe("shared statement wizard", () => {
     await upload([csvRow({ method })]);
     const trigger = container.querySelector<HTMLElement>(`[aria-label="账户映射：${method}"]`)!;
     await act(async () => trigger.click());
-    const clear = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((item) => item.textContent === "请选择")!;
+    const clear = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (item) => item.textContent === "请选择",
+    )!;
     await act(async () => clear.click());
     await click("刷新核对");
     expect(trigger.textContent).toContain("请选择");
@@ -208,41 +227,49 @@ describe("shared statement wizard", () => {
     const { ctx } = context(JSON.stringify({ [method]: "manual" }), [wallet, account("manual")]);
     await renderPage(ctx);
     await upload([csvRow({ method })]);
-    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("manual");
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
+      "manual",
+    );
     expect(container.textContent).toContain("已保存");
     vi.mocked(ctx.api.accounts.getAll).mockResolvedValue([wallet]);
     await click("刷新核对");
-    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain("请选择");
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
+      "请选择",
+    );
     await click("保存映射并预览");
-    expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("提交确认"))!.disabled).toBe(true);
+    expect(
+      Array.from(container.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("提交确认"),
+      )!.disabled,
+    ).toBe(true);
   });
 
-  it("preserves uploaded rows across language and region changes and submits only after confirmation", async () => {
+  it("切换宿主语言后保持中文及已上传数据，仅在确认后保存", async () => {
     const { ctx, stored, saveMany } = context();
     await renderPage(ctx);
     await upload([csvRow({ amount: "1234.56" })]);
     await click("保存映射并预览");
     await renderPage(ctx, "de-DE", "en", "America/New_York");
-    expect(container.querySelector("h1")!.textContent).toBe("Statement import");
-    await click("Confirm import");
+    expect(container.querySelector("h1")!.textContent).toBe("账单导入");
+    await click("提交确认");
     expect(saveMany).not.toHaveBeenCalled();
-    await click("Import ready rows only: 1");
+    await click("确认仅导入已就绪 1 笔");
     expect(stored[0].amount).toBe("1234.56");
     expect(stored[0].metadata!.unifiedStatementImport).toMatchObject({
       sources: [{ amount: "1234.56", originalTime: "2025/12/31 14:23" }],
     });
-    expect(container.textContent).toContain("Added: 1.");
+    expect(container.textContent).toContain("已新增 1 笔");
     expect(container.querySelector('[aria-current="step"]')).toBeNull();
     await renderPage(ctx, "zh-TW", "zh-Hant", "Asia/Taipei");
-    expect(container.querySelector("h1")!.textContent).toBe("帳單匯入");
-    expect(container.textContent).toContain("已新增 1 筆");
+    expect(container.querySelector("h1")!.textContent).toBe("账单导入");
+    expect(container.textContent).toContain("已新增 1 笔");
   });
-  it("shows CSV error line numbers in the selected language", async () => {
+  it("宿主使用英文时仍显示中文错误及物理行号", async () => {
     const { ctx } = context();
     await renderPage(ctx, "en-US", "en");
     await upload(['bad"quote']);
     expect(container.querySelector('[role="alert"]')!.textContent).toContain(
-      "Invalid CSV quoting on line 2.",
+      "第 2 行 CSV 引号格式不正确。",
     );
   });
   it("uses the existing account selector and persists mappings before review", async () => {

@@ -15,14 +15,14 @@ import { createDrafts } from "./import-model";
 const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
 const assets = {
   async getBlob(path: string) {
-    return new Blob([
-      new Uint8Array(await readFile(join(pdfRoot, path.replace("assets/pdf/", "")))),
-    ]);
+    const resource = PDF_RESOURCES.find((name) => path === `dist/assets/pdf/${name}`);
+    if (!resource) throw new Error("Asset is not registered in the package");
+    return new Blob([new Uint8Array(await readFile(join(pdfRoot, resource)))]);
   },
 };
 
 describe("Ant statement extraction", () => {
-  it("extracts Chinese cells, leading zeros, long orders and cross-page continuations from a synthetic PDF", async () => {
+  it("loads resources by their packaged paths and extracts Chinese cells and cross-page continuations", async () => {
     const progress: number[] = [];
     const rows = await parseStatement(
       new Uint8Array(await readFile(new URL("./fixtures/statement.pdf", import.meta.url))),
