@@ -1,8 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { HEADER, mergePageTables, parseStatement, PDF_RESOURCES } from "./statement";
+import { describe, expect, it, vi } from "vitest";
+import { PDFParse } from "pdf-parse";
+import {
+  HEADER,
+  mergePageTables,
+  parseStatement,
+  PDF_RESOURCES,
+  isSignaturePage,
+} from "./statement";
 import { createDrafts } from "./import-model";
 
 const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
@@ -69,6 +76,62 @@ describe("Ant statement extraction", () => {
     await expect(parseStatement(data, assets, () => {}, controller.signal)).rejects.toThrow();
     expect(PDF_RESOURCES).toHaveLength(3);
   });
+
+  it("rejects an empty transaction page and only accepts the known final signature page", () => {
+    const transaction = [
+      "20261001000000000000000001",
+      "2026/10/01 09:00",
+      "用户买入",
+      "Test Fund A",
+      "",
+      "000032",
+      "100",
+      "/",
+      "100",
+      "100",
+      "0",
+      "2026/10/02 00:00",
+    ];
+    const pages = [
+      { num: 1, tables: [] },
+      { num: 2, tables: [[HEADER, transaction]] },
+    ];
+    expect(() =>
+      mergePageTables([...pages, { num: 3, tables: [] }, { num: 4, tables: [[transaction]] }]),
+    ).toThrow("missingPage");
+    expect(() =>
+      mergePageTables([...pages, { num: 3, tables: [], text: "交易明细 000032" }]),
+    ).toThrow("missingPage");
+    expect(
+      mergePageTables([...pages, { num: 3, tables: [], text: "2026年10月25日\n3 / 3" }]),
+    ).toHaveLength(1);
+    expect(isSignaturePage("2026年10月25日\n3 / 4", 3, 4)).toBe(false);
+    expect(isSignaturePage("2026年10月25日\n000032 100.00\n4 / 4", 4, 4)).toBe(false);
+    expect(isSignaturePage("", 4, 4)).toBe(false);
+  });
+
+  it.each([2, 3])(
+    "rejects page %i when the extraction library returns no table for a transaction page",
+    async (missingPage) => {
+      const original = PDFParse.prototype.getTable;
+      const spy = vi.spyOn(PDFParse.prototype, "getTable").mockImplementation(async function (
+        this: PDFParse,
+        options,
+      ) {
+        if (options?.partial?.[0] === missingPage)
+          return { total: 3, pages: [{ num: missingPage, tables: [] }], mergedTables: [] };
+        return original.call(this, options);
+      });
+      try {
+        const data = new Uint8Array(
+          await readFile(new URL("./fixtures/statement.pdf", import.meta.url)),
+        );
+        await expect(parseStatement(data, assets, () => {})).rejects.toThrow("missingPage");
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 
   it.runIf(!!process.env.ANT_FUND_SAMPLE)(
     "locally verifies the customer sample without logging or committing its contents",

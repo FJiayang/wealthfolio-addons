@@ -44,10 +44,9 @@ function isCalendarDate(value: string) {
 
 export function confirmationDate(value: string) {
   const match = /^(\d{4})\/(\d{2})\/(\d{2})(?:\d{2}:\d{2})?$/.exec(compact(value));
-  if (!match) throw new StatementError("date");
+  if (!match) return "";
   const date = `${match[1]}-${match[2]}-${match[3]}`;
-  if (!isCalendarDate(date)) throw new StatementError("date");
-  return date;
+  return isCalendarDate(date) ? date : "";
 }
 
 function field(value: string) {
@@ -107,7 +106,12 @@ export function unitPrice(leg: DraftLeg) {
   return gross.div(quantity).toDecimalPlaces(12).toString();
 }
 
+export function requiresExistingAsset(result: SymbolSearchResult) {
+  return !result.existingAssetId && !(result.canonicalExchangeMic || result.exchangeMic)?.trim();
+}
+
 export function bindingFromSearch(result: SymbolSearchResult): FundBinding {
+  if (requiresExistingAsset(result)) throw new StatementError("createAsset");
   return {
     assetId: result.existingAssetId,
     symbol: result.canonicalSymbol || result.symbol,
@@ -165,6 +169,10 @@ export function isDuplicate(row: ActivityImport) {
     row.duplicateOfLineNumber != null ||
     row.warnings?._duplicate?.length
   );
+}
+
+export function sourceRowNumber(lineNumber: number) {
+  return Math.floor(lineNumber / 2);
 }
 export function hasErrors(row: ActivityImport) {
   return (

@@ -38,7 +38,9 @@ export class StatementError extends Error {
       | "amount"
       | "asset"
       | "pending"
-      | "validation",
+      | "validation"
+      | "createAsset"
+      | "missingPage",
     public location = "",
   ) {
     super(code);
@@ -55,10 +57,28 @@ export function compact(value: string) {
   return value.replace(/\s/g, "");
 }
 
-export function mergePageTables(pages: { num: number; tables: string[][][] }[]): StatementRow[] {
+interface StatementPage {
+  num: number;
+  tables: string[][][];
+  text?: string;
+}
+
+export function isSignaturePage(text: string, page: number, total: number) {
+  if (page !== total) return false;
+  const content = compact(text);
+  const footer = `${page}/${total}`;
+  const body = content.endsWith(footer) ? content.slice(0, -footer.length) : content;
+  return /^(?:蚂蚁[（(]杭州[）)]基金销售有限公司)?\d{4}年\d{1,2}月\d{1,2}日$/.test(body);
+}
+
+export function mergePageTables(pages: StatementPage[]): StatementRow[] {
   const rows: StatementRow[] = [];
   let headerSeen = false;
   for (const page of pages) {
+    if (!page.tables.some((table) => table.length)) {
+      if (page.num === 1 || isSignaturePage(page.text ?? "", page.num, pages.at(-1)!.num)) continue;
+      throw new StatementError("missingPage", String(page.num));
+    }
     for (const table of page.tables) {
       for (let index = 0; index < table.length; index++) {
         const cells = table[index];
@@ -144,12 +164,18 @@ export async function parseStatement(
     if (resourceMissing) throw new StatementError("resource");
     if (!compact(text.text).includes("蚂蚁（杭州）基金销售有限公司"))
       throw new StatementError("format");
-    const pages: { num: number; tables: string[][][] }[] = [];
+    const pages: StatementPage[] = [];
     for (let page = 1; page <= text.total; page++) {
       signal?.throwIfAborted();
       const result = await parser.getTable({ partial: [page] });
       if (resourceMissing) throw new StatementError("resource");
-      pages.push(...result.pages);
+      const pageResult: StatementPage = result.pages[0];
+      if (page > 1 && !pageResult.tables.some((table) => table.length)) {
+        const content = await parser.getText({ partial: [page] });
+        if (resourceMissing) throw new StatementError("resource");
+        pageResult.text = content.pages[0].text;
+      }
+      pages.push(pageResult);
       onProgress(page, text.total);
       await new Promise((resolve) => setTimeout(resolve, 0));
     }

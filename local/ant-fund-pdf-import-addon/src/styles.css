@@ -1,11 +1,6 @@
 @import "tailwindcss";
 @source "./**/*.{ts,tsx}";
 
-.ant-fund-import {
-  padding: 1.5rem;
-  max-width: 80rem;
-  margin-inline: auto;
-}
 .ant-fund-import summary {
   cursor: pointer;
   padding-block: 0.5rem;

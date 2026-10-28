@@ -12,6 +12,13 @@ export const en = {
   bind: "Bind",
   bound: "Bound",
   unbound: "Not bound",
+  createAsset:
+    "This fund has no exchange MIC and is not yet in Wealthfolio. Create the asset in Wealthfolio first, then search again and bind the existing asset.",
+  missingPage:
+    "A transaction page could not be extracted. Import stopped to avoid missing records.",
+  sourceRecord: "Source record",
+  unknownSource: "Unknown source record",
+  duplicateSource: "Duplicate of",
   noResults:
     "No results. Check the configured providers, or create the fund in Wealthfolio and search again.",
   fundHint:
@@ -90,6 +97,12 @@ export const zh: Record<MessageKey, string> = {
   bind: "绑定",
   bound: "已绑定",
   unbound: "未绑定",
+  createAsset:
+    "此基金没有交易所 MIC，且尚未存在于 Wealthfolio。请先在宿主创建资产，再重新搜索并绑定已有资产。",
+  missingPage: "交易页未能成功提取，已停止导入，避免漏掉流水。",
+  sourceRecord: "原始记录",
+  unknownSource: "来源记录未知",
+  duplicateSource: "重复于",
   noResults: "未找到结果。请检查已配置的行情源，或先在 Wealthfolio 创建基金后重新搜索。",
   fundHint:
     "请核对代码、名称和 A/C 等份额类别。搜索使用宿主已配置的行情源；不能仅凭六位代码确认资产。",

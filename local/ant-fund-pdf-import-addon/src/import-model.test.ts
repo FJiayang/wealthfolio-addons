@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   bindingFromSearch,
+  requiresExistingAsset,
+  sourceRowNumber,
   confirmationDate,
   createDrafts,
   hasErrors,
@@ -149,10 +151,85 @@ describe("financial mapping", () => {
     expect(() => toActivities([draft], {}, "account")).toThrow("asset");
     expect(() => toActivities([draft], bindings, "")).toThrow("pending");
     expect(confirmationDate("2026/10/0\n2 00:00")).toBe("2026-10-02");
-    expect(() => confirmationDate("2026/02/30 00:00")).toThrow("date");
+    expect(confirmationDate("2026/02/30 00:00")).toBe("");
     expect(
       toActivities([draft, { ...draft, excluded: true, legs: [] }], bindings, "account"),
     ).toHaveLength(1);
+  });
+});
+
+describe("review regressions", () => {
+  it("keeps an absent or invalid confirmation date editable without losing other rows", () => {
+    for (const value of ["", "/", "2026/02/30 00:00", "2026/10/"]) {
+      const source = {
+        ...draft.source,
+        line: 2,
+        cells: draft.source.cells.map((cell, i) => (i === 11 ? value : cell)),
+      };
+      const drafts = createDrafts([draft.source, source]);
+      expect(drafts).toHaveLength(2);
+      expect(drafts[1].legs[0].date).toBe("");
+      expect(() => toActivities(drafts, bindings, "account")).toThrow("date");
+      drafts[1].legs[0].date = "2026-10-03";
+      expect(toActivities(drafts, bindings, "account")).toHaveLength(2);
+      drafts[1].legs[0].date = "";
+      drafts[1].excluded = true;
+      expect(toActivities(drafts, bindings, "account")).toHaveLength(1);
+    }
+  });
+
+  it("requires a real existing asset for an OTC fund with no MIC", () => {
+    const fund = {
+      symbol: "nav:000032.OF",
+      canonicalSymbol: "FUND:000032",
+      longName: "Test Fund A",
+      currency: "CNY",
+      isExisting: false,
+    } as SymbolSearchResult;
+    expect(requiresExistingAsset(fund)).toBe(true);
+    expect(() => bindingFromSearch(fund)).toThrow("createAsset");
+    expect(() => bindingFromSearch({ ...fund, isExisting: true })).toThrow("createAsset");
+    const existing = { ...fund, isExisting: true, existingAssetId: "existing-otc-fund" };
+    expect(requiresExistingAsset(existing)).toBe(false);
+    expect(bindingFromSearch(existing)).toMatchObject({
+      assetId: "existing-otc-fund",
+      symbol: "FUND:000032",
+      quoteMode: undefined,
+    });
+    expect(requiresExistingAsset({ ...fund, canonicalExchangeMic: "XSHG" })).toBe(false);
+  });
+
+  it("maps preview, duplicate references and retry rows back to the original record after conversion or exclusion", () => {
+    const converted = {
+      ...draft,
+      source: { ...draft.source, line: 3 },
+      legs: [{ ...leg, activityType: "SELL" as const }, leg],
+    };
+    const inputs = toActivities(
+      [draft, { ...draft, source: { ...draft.source, line: 2 }, excluded: true }, converted],
+      bindings,
+      "account",
+    );
+    expect(new Set(inputs.map((row) => row.lineNumber)).size).toBe(3);
+    expect(inputs.map((row) => sourceRowNumber(row.lineNumber!))).toEqual([1, 3, 3]);
+    const duplicate = { ...inputs[2], duplicateOfLineNumber: inputs[0].lineNumber };
+    expect(sourceRowNumber(duplicate.duplicateOfLineNumber!)).toBe(1);
+    const failed = { ...inputs[1], isValid: false, errors: { amount: ["write failed"] } };
+    const result = {
+      activities: [inputs[0], failed, inputs[2]],
+      importRunId: "run",
+      summary: {
+        total: 3,
+        imported: 2,
+        skipped: 1,
+        duplicates: 0,
+        assetsCreated: 0,
+        success: false,
+      },
+    } satisfies ImportActivitiesResult;
+    expect(reconcileResult(inputs, result).map((row) => sourceRowNumber(row.lineNumber!))).toEqual([
+      3,
+    ]);
   });
 });
 
