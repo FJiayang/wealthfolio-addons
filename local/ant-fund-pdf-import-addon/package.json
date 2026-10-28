@@ -1,0 +1,38 @@
+{
+  "name": "ant-fund-pdf-import-addon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/addon.js",
+  "license": "MIT",
+  "scripts": {
+    "dev:server": "wealthfolio dev",
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run --exclude '**/package.test.ts'",
+    "test:package": "vitest run src/package.test.ts",
+    "bundle": "pnpm build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "decimal.js": "10.6.0",
+    "pdf-parse": "2.4.5",
+    "pdfjs-dist": "5.4.296"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^20.19.33",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@wealthfolio/addon-dev-tools": "3.11.0",
+    "@wealthfolio/addon-sdk": "3.11.0",
+    "@wealthfolio/ui": "3.11.0",
+    "fflate": "^0.8.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.2",
+    "vitest": "^3.2.7"
+  }
+}

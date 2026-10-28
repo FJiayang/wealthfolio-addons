@@ -5,7 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.33.4",
   "workspaces": [
-    "official/*"
+    "official/*",
+    "local/*"
   ],
   "scripts": {
     "build:official": "pnpm -r --filter './official/*' build",
@@ -18,7 +19,7 @@
     "release:official": "node scripts/release-official.mjs",
     "generate:readme": "node scripts/generate-readme.mjs",
     "generate": "pnpm generate:readme",
-    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test"
+    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test && pnpm --filter ant-fund-pdf-import-addon type-check && pnpm --filter ant-fund-pdf-import-addon test"
   },
   "devDependencies": {
     "ajv": "^8.20.0",

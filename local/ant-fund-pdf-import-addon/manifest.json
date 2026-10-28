@@ -1,0 +1,48 @@
+{
+  "id": "ant-fund-pdf-import-addon",
+  "name": "Ant Fund PDF Import",
+  "version": "0.1.0",
+  "description": "Import Ant Fund transaction statements locally with a review before saving.",
+  "author": "Local fork maintainer",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.11.0",
+  "minWealthfolioVersion": "3.11.0",
+  "enabled": true,
+  "contributes": {
+    "routes": [{ "id": "ant-fund-pdf-import" }],
+    "links": {
+      "sidebar": [
+        {
+          "id": "ant-fund-pdf-import",
+          "route": "ant-fund-pdf-import",
+          "label": "蚂蚁基金 PDF / Ant Fund PDF",
+          "icon": "receipt",
+          "order": 220
+        }
+      ]
+    }
+  },
+  "hostDependencies": {
+    "@wealthfolio/addon-sdk": "^3.11.0",
+    "@wealthfolio/ui": "^3.11.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "permissions": [
+    {
+      "category": "accounts",
+      "functions": ["getAll"],
+      "purpose": "Select an existing CNY investment account."
+    },
+    {
+      "category": "market-data",
+      "functions": ["searchTicker"],
+      "purpose": "Identify funds through the host's configured providers."
+    },
+    {
+      "category": "activities",
+      "functions": ["checkImport", "import"],
+      "purpose": "Preview validation and duplicates, then import confirmed activities."
+    }
+  ]
+}

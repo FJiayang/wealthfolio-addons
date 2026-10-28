@@ -16,6 +16,7 @@ Repo split and migration notes:
 
 ```text
 official/                    Wealthfolio-owned addon source
+local/                       Fork-maintained addons, built separately without store listings
 community/directory/         Community discovery entries
 templates/                   Submission templates
 schemas/                     JSON schemas for addon metadata
@@ -176,6 +177,9 @@ pnpm generate
 pnpm type-check:official
 pnpm bundle:official
 ```
+
+Fork-maintained PDF import: see [local/ant-fund-pdf-import-addon](local/ant-fund-pdf-import-addon/README.md).
+The Validate workflow tests and bundles it separately and uploads an installable ZIP.
 
 | Script                     | Description                                                                                                     |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
