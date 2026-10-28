@@ -25,6 +25,10 @@ it("安装包只有运行文件和说明，没有源账单、测试及商店元�
     ),
   ).toBe(false);
   const manifest = JSON.parse(strFromU8(files["manifest.json"]));
+  expect(Object.keys(manifest.contributes.links)).toEqual(["spending-import"]);
+  expect(manifest.contributes.links["spending-import"][0].route).toBe(
+    manifest.contributes.routes[0].id,
+  );
   expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.11.0");
   expect(
     manifest.permissions.find(

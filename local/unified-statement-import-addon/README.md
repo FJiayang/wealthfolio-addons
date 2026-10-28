@@ -16,7 +16,7 @@ pnpm --filter unified-statement-import-addon test:package
 ```
 
 在 Wealthfolio 插件设置中选择“从文件安装”，安装
-`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.1.2.zip`，授权读取账户、读取活动和批量保存。侧边栏打开“账单导入”。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
+`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.1.2.zip`，授权读取账户、读取活动和批量保存。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
 
 ## 使用
 

@@ -11,7 +11,7 @@
   "contributes": {
     "routes": [{ "id": "statement-import" }],
     "links": {
-      "sidebar": [
+      "spending-import": [
         {
           "id": "statement-import",
           "route": "statement-import",
