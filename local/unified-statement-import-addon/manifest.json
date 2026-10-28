@@ -1,0 +1,39 @@
+{
+  "id": "unified-statement-import-addon",
+  "name": "账单导入",
+  "version": "0.1.0",
+  "description": "本地解析支付宝账单，预览、映射账户并检测重复后保存。",
+  "author": "Local fork maintainer",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.11.0",
+  "minWealthfolioVersion": "3.11.0",
+  "enabled": true,
+  "contributes": {
+    "routes": [{ "id": "statement-import" }],
+    "links": {
+      "sidebar": [
+        {
+          "id": "statement-import",
+          "route": "statement-import",
+          "label": "账单导入",
+          "icon": "receipt",
+          "order": 230
+        }
+      ]
+    }
+  },
+  "hostDependencies": {
+    "@wealthfolio/addon-sdk": "^3.11.0",
+    "@wealthfolio/ui": "^3.11.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "permissions": [
+    { "category": "accounts", "functions": ["getAll"], "purpose": "选择已有现金或信用卡账户。" },
+    {
+      "category": "activities",
+      "functions": ["getAll", "saveMany"],
+      "purpose": "读取来源以检测重复，并保存用户确认的新增记录。"
+    }
+  ]
+}

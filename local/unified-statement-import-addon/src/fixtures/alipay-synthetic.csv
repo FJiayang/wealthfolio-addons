@@ -1,0 +1,11 @@
+支付宝账户：synthetic-account
+共1778笔记录
+
+交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注
+2025/12/31 14:23,餐饮美食,虚构商店甲,/,午餐,支出,12.30,账户余额,交易成功,synthetic-order-001,synthetic-merchant-001,
+2025/12/31 14:24,其他,虚构付款方,/,收入,收入,20,,交易成功,synthetic-order-002,synthetic-merchant-002,
+2025/12/31 14:25,餐饮美食,虚构商店甲,/,退款,不计收支,5,账户余额,退款成功,synthetic-order-003,synthetic-merchant-003,
+2025/12/31 14:26,餐饮美食,虚构商店乙,/,组合付款,支出,30,虚构信用卡(0000)&红包,交易成功,synthetic-order-004,synthetic-merchant-004,
+2025/12/31 14:27,其他,虚构商店丙,/,已关闭,不计收支,10,账户余额,交易关闭,synthetic-order-005,synthetic-merchant-005,
+2025/12/31 14:28,投资理财,虚构理财,/,转入,不计收支,10,账户余额,交易成功,synthetic-order-006,synthetic-merchant-006,
+2025/12/31 14:29,其他,虚构商店丁,/,未完成,支出,10,账户余额,处理中,synthetic-order-007,synthetic-merchant-007,
