@@ -54,6 +54,9 @@ importers:
       fflate:
         specifier: ^0.8.2
         version: 0.8.3
+      happy-dom:
+        specifier: ^20.14.0
+        version: 20.14.0
       react:
         specifier: ^19.2.4
         version: 19.2.6
