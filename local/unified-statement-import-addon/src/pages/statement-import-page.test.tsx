@@ -99,6 +99,36 @@ async function upload(lines = [csvRow()], advance = true) {
 }
 
 describe("shared statement wizard", () => {
+  it.each(["ltr", "rtl"])("%s 缺失付款方式在映射项下展示全部六笔关联流水", async (direction) => {
+    document.documentElement.dir = direction;
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    await upload([
+      ...Array.from({ length: 6 }, (_, index) => csvRow({
+        id: `income-${index}`,
+        method: "",
+        direction: index === 5 ? "不计收支" : "收入",
+        description: `待判断收款来源-${index}`,
+      })),
+      csvRow({ id: "other", method: "账户余额", description: "其他账户交易" }),
+    ]);
+    const table = container.querySelector('[aria-label="流水明细：未提供付款方式"]')!;
+    expect(table).toBeTruthy();
+    expect(table.closest("details")!.open).toBe(true);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
+    for (let index = 0; index < 6; index++) expect(table.textContent).toContain(`待判断收款来源-${index}`);
+    expect(table.textContent).not.toContain("其他账户交易");
+    for (const heading of ["交易时间", "记账性质", "交易对方", "商品说明", "金额", "处理状态"]) expect(table.textContent).toContain(heading);
+    expect(table.textContent).toContain("虚构商户");
+    expect(table.textContent).toContain("收入");
+    expect(table.textContent).toContain("CNY");
+    expect(table.textContent).toContain("默认跳过个人记账");
+    const trigger = container.querySelector<HTMLElement>('[aria-label="账户映射："]')!;
+    await act(async () => trigger.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("cash"))!.click());
+    expect(container.querySelector('[aria-label="流水明细：未提供付款方式"]')!.querySelectorAll("tbody tr")).toHaveLength(6);
+    expect(saveMany).not.toHaveBeenCalled();
+  });
   it("先选择格式，解析后留在上传页，下一步进入映射且不写账目", async () => {
     const { ctx, saveMany } = context();
     await renderPage(ctx);

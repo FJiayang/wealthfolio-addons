@@ -28,6 +28,12 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   useAmountFormatting,
   useNumberFormatting,
   useDateFormatting,
@@ -908,6 +914,77 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                                   </ul>
                                 )}
                               </div>
+                              <details open={pending} className="min-w-0 sm:col-span-2">
+                                <summary className="cursor-pointer text-sm font-medium">
+                                  关联流水明细
+                                </summary>
+                                <div className="mt-3 max-h-80 overflow-auto rounded-lg border">
+                                  <Table
+                                    aria-label={`流水明细：${method || "未提供付款方式"}`}
+                                    containerClassName="overflow-visible"
+                                    className="min-w-max"
+                                  >
+                                    <TableHeader className="bg-card sticky top-0 z-10">
+                                      <TableRow>
+                                        {["来源行", "交易时间", "记账性质", "交易对方", "商品说明", "金额", "处理状态"].map((heading) => (
+                                          <TableHead
+                                            key={heading}
+                                            className={heading === "金额" ? "text-end" : "text-start"}
+                                          >
+                                            {heading}
+                                          </TableHead>
+                                        ))}
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {preview
+                                        .filter((entry) => entry.row.source.paymentMethod === method)
+                                        .map((entry) => {
+                                        const source = entry.row.source;
+                                        const appearance = statusAppearance[entry.status];
+                                        const StatusIcon = appearance.icon;
+                                        return (
+                                          <TableRow key={source.lineNumber}>
+                                            <TableCell>{n(source.lineNumber)}</TableCell>
+                                            <TableCell className="whitespace-nowrap">
+                                              {source.date
+                                                ? formatDateTime(source.date, { dateStyle: "short", timeStyle: "short" })
+                                                : source.originalTime}
+                                            </TableCell>
+                                            <TableCell>
+                                              {entry.kind ? (
+                                                <ImportTypeBadge
+                                                  type={entry.kind === "expense" ? "WITHDRAWAL" : entry.kind === "income" ? "DEPOSIT" : "CREDIT"}
+                                                >
+                                                  {kinds[entry.kind]}
+                                                </ImportTypeBadge>
+                                              ) : source.direction}
+                                            </TableCell>
+                                            <TableCell className="max-w-64 whitespace-normal break-words">
+                                              {source.merchant}
+                                            </TableCell>
+                                            <TableCell className="max-w-80 whitespace-normal break-words">
+                                              {source.description}
+                                            </TableCell>
+                                            <TableCell className="text-end whitespace-nowrap tabular-nums">
+                                              {entry.row.error ? entry.amount : formatAmount(entry.amount, source.currency, false)} {source.currency}
+                                            </TableCell>
+                                            <TableCell>
+                                              <Badge variant={appearance.variant}>
+                                                <StatusIcon className="me-1 size-3" />
+                                                {labels[entry.status]}
+                                              </Badge>
+                                              <span className="text-muted-foreground ms-2 text-xs">
+                                                {entry.reason}
+                                              </span>
+                                            </TableCell>
+                                          </TableRow>
+                                        );
+                                      })}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </details>
                             </div>
                           );
                         })}
