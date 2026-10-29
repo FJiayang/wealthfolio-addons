@@ -59,10 +59,15 @@ it.skipIf(!process.env.STATEMENT_TEST_ORIGIN)("隔离真实宿主保存来源并
     "synthetic.csv",
   ).rows;
   const mappings = { 账户余额: accounts[0].id, "": accounts[0].id };
-  const preview = buildPreview(rows, accounts, [], mappings, {});
+  const decisions = Object.fromEntries(
+    buildPreview(rows, accounts, [], mappings, {})
+      .filter((entry) => entry.status === "review" || entry.status === "error")
+      .map((entry) => [entry.row.source.lineNumber, { excluded: true }]),
+  );
+  const preview = buildPreview(rows, accounts, [], mappings, decisions);
   expect(preview.filter((entry) => entry.status === "ready")).toHaveLength(3);
   const submit = createSubmitter(host);
-  const result = await submit(rows, mappings, {}, preview);
+  const result = await submit(rows, mappings, decisions, preview);
   expect(result.created).toBe(3);
   const stored = await host.activities.getAll();
   expect(stored).toHaveLength(3);
@@ -73,6 +78,6 @@ it.skipIf(!process.env.STATEMENT_TEST_ORIGIN)("隔离真实宿主保存来源并
     "5.00",
   ]);
   expect(result.preview.filter((entry) => entry.status === "duplicate")).toHaveLength(3);
-  expect((await submit(rows, mappings, {}, result.preview)).created).toBe(0);
+  expect((await submit(rows, mappings, decisions, result.preview)).created).toBe(0);
   expect(await host.activities.getAll()).toHaveLength(3);
 });

@@ -80,16 +80,61 @@ async function click(text: string) {
   await act(async () => button!.click());
 }
 
-async function upload(lines = [csvRow(), csvRow({ id: "pending", direction: "不计收支" })]) {
+async function upload(lines = [csvRow()], advance = true) {
+  if (!container.querySelector('input[type="file"]')) {
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+        .find((option) => option.textContent?.includes("CSV"))!
+        .click(),
+    );
+  }
   const input = container.querySelector('input[type="file"]')!;
   const file = new File([[HEADER, ...lines].join("\n")], "synthetic.csv");
   Object.defineProperty(input, "files", { configurable: true, value: [file] });
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
+  if (advance && !container.querySelector('[role="alert"]')) await click("补齐映射");
 }
 
 describe("shared statement wizard", () => {
+  it("先选择格式，解析后留在上传页，下一步进入映射且不写账目", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    await upload([csvRow()], false);
+    expect(container.querySelector('[aria-current="step"]')?.getAttribute("aria-label")).toContain(
+      "上传",
+    );
+    expect(container.textContent).toContain("文件预览");
+    await click("补齐映射");
+    expect(container.textContent).toContain("已映射 / 已跳过");
+    expect(saveMany).not.toHaveBeenCalled();
+  });
+
+  it("缺失记账性质阻断映射，选中问题记录后可从顶部跳过", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    await upload([csvRow(), csvRow({ id: "pending", direction: "不计收支" })]);
+    const next = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("保存映射并预览"),
+    )!;
+    expect(next.disabled).toBe(true);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="选择来源 3"]')!.click(),
+    );
+    const toolbar = container.querySelector('[aria-label="映射批量操作"]')!;
+    await act(async () =>
+      [...toolbar.querySelectorAll("button")]
+        .find((button) => button.textContent === "跳过")!
+        .click(),
+    );
+    expect(next.disabled).toBe(false);
+    await click("保存映射并预览");
+    expect(container.querySelector('[aria-label="第 3 行确认"]')).toBeNull();
+    expect(saveMany).not.toHaveBeenCalled();
+  });
   it("余额宝持仓账户按名称预填并可提交，来源仍以 CNY 入账", async () => {
     const wallet = { ...account("yuebao"), name: "余额宝", trackingMode: "HOLDINGS" as const };
     const { ctx, storage, stored } = context("{}", [wallet]);
@@ -102,7 +147,7 @@ describe("shared statement wizard", () => {
     await click("保存映射并预览");
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 余额宝: "yuebao" }));
     await click("提交确认");
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     expect(stored[0]).toMatchObject({
       accountId: "yuebao",
       activityType: "WITHDRAWAL",
@@ -140,7 +185,7 @@ describe("shared statement wizard", () => {
     );
     await click("保存映射并预览");
     await click("提交确认");
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     expect(stored[0].accountId).toBe("securities");
   });
 
@@ -171,7 +216,7 @@ describe("shared statement wizard", () => {
     await click("保存映射并预览");
     expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ [method]: "card" }));
     await click("提交确认");
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     await click("开始新导入");
     await upload([csvRow({ method })]);
     expect(container.textContent).toContain("已保存");
@@ -199,7 +244,9 @@ describe("shared statement wizard", () => {
       (item) => item.textContent?.includes("cash"),
     )!;
     await act(async () => option.click());
-    expect(trigger.textContent).toContain("cash");
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
+      "cash",
+    );
     expect(container.textContent).toContain("人工选择");
   });
 
@@ -216,9 +263,11 @@ describe("shared statement wizard", () => {
     )!;
     await act(async () => clear.click());
     await click("刷新核对");
-    expect(trigger.textContent).toContain("请选择");
+    expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
+      "请选择",
+    );
     await click("保存映射并预览");
-    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, "{}");
+    expect(storage.set).not.toHaveBeenCalled();
   });
 
   it("保存映射优先于自动推断，账户已不存在时刷新清除有效选择", async () => {
@@ -236,10 +285,9 @@ describe("shared statement wizard", () => {
     expect(container.querySelector(`[aria-label="账户映射：${method}"]`)!.textContent).toContain(
       "请选择",
     );
-    await click("保存映射并预览");
     expect(
       Array.from(container.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("提交确认"),
+        button.textContent?.includes("保存映射并预览"),
       )!.disabled,
     ).toBe(true);
   });
@@ -253,7 +301,7 @@ describe("shared statement wizard", () => {
     expect(container.querySelector("h1")!.textContent).toBe("账单导入");
     await click("提交确认");
     expect(saveMany).not.toHaveBeenCalled();
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     expect(stored[0].amount).toBe("1234.56");
     expect(stored[0].metadata!.unifiedStatementImport).toMatchObject({
       sources: [{ amount: "1234.56", originalTime: "2025/12/31 14:23" }],
@@ -311,7 +359,7 @@ describe("shared statement wizard", () => {
     await upload();
     await click("保存映射并预览");
     await click("提交确认");
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     expect(stored).toHaveLength(1);
     expect(container.textContent).toContain("已新增 1 笔");
     expect(container.querySelector('[aria-current="step"]')).toBeNull();
@@ -331,7 +379,7 @@ describe("shared statement wizard", () => {
     await click("保存映射并预览");
     await click("提交确认");
     saveMany.mockRejectedValueOnce(new Error("lost response"));
-    await click("确认仅导入已就绪 1 笔");
+    await click("导入 1 笔");
     expect(container.textContent).toContain("结果待核对");
     expect(container.textContent).not.toContain("导入完成");
     await click("返回预览");
@@ -344,12 +392,10 @@ describe("shared statement wizard", () => {
       const { ctx, storage } = context('{"账户余额":"missing"}');
       await renderPage(ctx);
       await upload();
-      await click("保存映射并预览");
       const next = Array.from(container.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("提交确认"),
+        button.textContent?.includes("保存映射并预览"),
       )!;
       expect(next.disabled).toBe(true);
-      await click("返回账户映射");
       await click("重置映射");
       expect(storage.delete).toHaveBeenCalledWith(MAPPING_KEY);
     } finally {

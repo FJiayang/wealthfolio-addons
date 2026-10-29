@@ -111,12 +111,7 @@ export function mergePageTables(pages: StatementPage[]): StatementRow[] {
   return rows;
 }
 
-export async function parseStatement(
-  data: Uint8Array,
-  assets: Pick<AddonAssets, "getBlob">,
-  onProgress: (page: number, total: number) => void,
-  signal?: AbortSignal,
-): Promise<StatementRow[]> {
+async function openStatement(data: Uint8Array, assets: Pick<AddonAssets, "getBlob">) {
   const resourceData = new Map<string, Uint8Array>();
   let resourceMissing = false;
   for (const name of PDF_RESOURCES) {
@@ -159,20 +154,55 @@ export async function parseStatement(
     stopAtErrors: true,
     verbosity: 0,
   });
+  return {
+    parser,
+    checkResources() {
+      if (resourceMissing) throw new StatementError("resource");
+    },
+  };
+}
+
+export async function renderStatementPage(
+  data: Uint8Array,
+  assets: Pick<AddonAssets, "getBlob">,
+  page: number,
+) {
+  const { parser, checkResources } = await openStatement(data, assets);
+  try {
+    const result = await parser.getScreenshot({
+      partial: [page],
+      desiredWidth: 1000,
+      imageDataUrl: true,
+      imageBuffer: false,
+    });
+    checkResources();
+    return { image: result.pages[0].dataUrl, total: result.total };
+  } finally {
+    await parser.destroy();
+  }
+}
+
+export async function parseStatement(
+  data: Uint8Array,
+  assets: Pick<AddonAssets, "getBlob">,
+  onProgress: (page: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<StatementRow[]> {
+  const { parser, checkResources } = await openStatement(data, assets);
   try {
     const text = await parser.getText({ partial: [1] });
-    if (resourceMissing) throw new StatementError("resource");
+    checkResources();
     if (!compact(text.text).includes("蚂蚁（杭州）基金销售有限公司"))
       throw new StatementError("format");
     const pages: StatementPage[] = [];
     for (let page = 1; page <= text.total; page++) {
       signal?.throwIfAborted();
       const result = await parser.getTable({ partial: [page] });
-      if (resourceMissing) throw new StatementError("resource");
+      checkResources();
       const pageResult: StatementPage = result.pages[0];
       if (page > 1 && !pageResult.tables.some((table) => table.length)) {
         const content = await parser.getText({ partial: [page] });
-        if (resourceMissing) throw new StatementError("resource");
+        checkResources();
         pageResult.text = content.pages[0].text;
       }
       pages.push(pageResult);

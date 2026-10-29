@@ -9,16 +9,59 @@ const cash = account();
 const mapping = { 账户余额: "cash" };
 
 describe("预览、来源和重复检测", () => {
+  it("人工核对不能绕过金额、账户或来源错误，字段校验优先展示", () => {
+    const parsed = rows(csvRow({ method: "信用卡&红包" }));
+    const decisions = {
+      2: { accountId: "cash", kind: "expense" as const, confirmed: true, amount: "bad" },
+    };
+    expect(buildPreview(parsed, [cash], [], {}, decisions)[0]).toMatchObject({
+      status: "error",
+      reason: "确认金额格式不正确",
+    });
+    expect(
+      buildPreview(parsed, [cash], [], {}, { 2: { ...decisions[2], confirmed: false } })[0].status,
+    ).toBe("error");
+    expect(
+      buildPreview(
+        parsed,
+        [cash],
+        [],
+        {},
+        { 2: { ...decisions[2], amount: "10", accountId: "missing" } },
+      )[0].status,
+    ).toBe("review");
+    expect(
+      buildPreview(rows(csvRow({ id: "" })), [cash], [], mapping, { 2: { confirmed: true } })[0]
+        .create,
+    ).toBeUndefined();
+  });
   it("推断与保存映射共用预览入口，逐行人工选择及清空优先", () => {
     const method = "招商银行信用卡(1234)";
     const parsed = rows(csvRow({ method }));
-    const accounts = [{ ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" }, cash];
-    expect(buildPreview(parsed, accounts, [], {}, {})[0]).toMatchObject({ status: "ready", accountId: "card" });
+    const accounts = [
+      { ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" },
+      cash,
+    ];
+    expect(buildPreview(parsed, accounts, [], {}, {})[0]).toMatchObject({
+      status: "ready",
+      accountId: "card",
+    });
     expect(buildPreview(parsed, accounts, [], { [method]: "cash" }, {})[0].accountId).toBe("cash");
-    expect(buildPreview(parsed, accounts, [], { [method]: "card" }, { 2: { accountId: "cash" } })[0].accountId).toBe("cash");
-    expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe("review");
-    for (const overrides of [{ status: "处理中" }, { method: `${method}&红包` }, { direction: "不计收支" }]) {
-      expect(buildPreview(rows(csvRow({ method, ...overrides })), accounts, [], {}, {})[0].status).toBe("review");
+    expect(
+      buildPreview(parsed, accounts, [], { [method]: "card" }, { 2: { accountId: "cash" } })[0]
+        .accountId,
+    ).toBe("cash");
+    expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe(
+      "review",
+    );
+    for (const overrides of [
+      { status: "处理中" },
+      { method: `${method}&红包` },
+      { direction: "不计收支" },
+    ]) {
+      expect(
+        buildPreview(rows(csvRow({ method, ...overrides })), accounts, [], {}, {})[0].status,
+      ).toBe("review");
     }
   });
 
@@ -103,9 +146,7 @@ describe("预览、来源和重复检测", () => {
       "review",
     );
     expect(buildPreview(rows(csvRow()), [cash], [], {}, {})[0].status).toBe("review");
-    expect(
-      buildPreview(rows(csvRow()), [], [], mapping, {})[0].status,
-    ).toBe("review");
+    expect(buildPreview(rows(csvRow()), [], [], mapping, {})[0].status).toBe("review");
   });
   it("识别收入、退款，不因账户类型阻止入账；关闭交易不能强行恢复", () => {
     const parsed = rows(

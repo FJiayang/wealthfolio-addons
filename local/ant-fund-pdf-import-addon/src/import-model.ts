@@ -103,6 +103,12 @@ export function toImportRequest(
       if (!draft.excluded && !draft.legs.length)
         throw new StatementError("pending", String(draft.source.line));
       return (draft.legs.length ? draft.legs : [undefined]).map((leg) => {
+        if (
+          leg &&
+          !draft.excluded &&
+          (!/^\d{6}$/.test(leg.code) || !["BUY", "SELL", "DIVIDEND"].includes(leg.activityType))
+        )
+          throw new StatementError("asset", String(draft.source.line));
         if (leg && !draft.excluded && !isCalendarDate(leg.date))
           throw new StatementError("date", String(draft.source.line));
         const price = leg && !draft.excluded ? unitPrice(leg) : undefined;

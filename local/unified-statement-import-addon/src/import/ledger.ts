@@ -120,7 +120,8 @@ export function buildPreview(
   const seen = new Set<string>();
   const resolvedAccounts = new Map(
     [...new Set(rows.map(({ source }) => source.paymentMethod))].map((method) => [
-      method, resolveAccount(method, accounts, mappings).accountId,
+      method,
+      resolveAccount(method, accounts, mappings).accountId,
     ]),
   );
   return rows.map((row) => {
@@ -150,7 +151,6 @@ export function buildPreview(
     if (matches.length) return result("duplicate", "此订单已经导入，保留现有账目");
     if (seen.has(key)) return result("duplicate", "本批次已有相同订单");
     // Only claim a batch key when a row can actually be submitted.
-    if (row.reviewReason && !decision.confirmed) return result("review", row.reviewReason);
     if (!kind) return result("review", "请选择收入、支出或退款");
     const account = accountsById.get(accountId);
     if (!account) return result("review", "请选择账户");
@@ -160,6 +160,7 @@ export function buildPreview(
       return result("error", "确认金额格式不正确");
     }
     if (amount === "0.00") return result("review", "零金额记录不提交");
+    if (row.reviewReason && !decision.confirmed) return result("review", row.reviewReason);
     seen.add(key);
     const create: ActivityCreate = {
       accountId,

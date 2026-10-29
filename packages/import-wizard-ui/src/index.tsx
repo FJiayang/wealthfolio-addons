@@ -1,4 +1,11 @@
 import { Fragment, useRef, useState, type ReactNode } from "react";
+export {
+  ImportChoice,
+  ImportFilePreview,
+  ImportMappingGroup,
+  ImportReviewTable,
+  ImportTypeBadge,
+} from "./import-review";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -178,7 +185,7 @@ export function FileDropzone({
   };
   return (
     <div
-      className={`group relative flex h-full flex-col items-center justify-center gap-2 rounded-lg border p-4 transition-colors ${dragging ? "border-primary bg-primary/5" : "border-border bg-background/50"} ${file && !invalid && !isLoading ? "" : "border-dashed"} ${!file && !isLoading ? "cursor-pointer hover:bg-background/80" : ""}`}
+      className={`group relative flex h-full flex-col items-center justify-center gap-2 rounded-lg border p-4 transition-colors ${dragging ? "border-primary bg-primary/5" : "border-border bg-background/50"} ${file && !invalid && !isLoading ? "" : "border-dashed"} ${!file && !isLoading ? "hover:bg-background/80 cursor-pointer" : ""}`}
       role={!file ? "button" : undefined}
       tabIndex={!file && !isLoading ? 0 : undefined}
       aria-label={!file ? labels.choose : undefined}
@@ -233,13 +240,13 @@ export function FileDropzone({
           <Icons.Import className="size-5" />
         )}
       </span>
-      <div className="min-w-0 max-w-full text-center text-xs">
+      <div className="max-w-full min-w-0 text-center text-xs">
         {isLoading ? (
           <p className="font-medium">{labels.processing}</p>
         ) : file ? (
           <>
             <p
-              className={`break-all font-medium ${invalid ? "text-destructive-subtle-foreground" : ""}`}
+              className={`font-medium break-all ${invalid ? "text-destructive-subtle-foreground" : ""}`}
             >
               {file.name}
             </p>

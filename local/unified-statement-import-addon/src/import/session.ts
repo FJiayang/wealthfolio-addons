@@ -52,6 +52,13 @@ export function createSubmitter(host: ImportHost) {
           message: "已有账目或账户状态发生变化，预览已刷新，请重新确认。",
         };
       const creates = preview.flatMap((entry) => (entry.create ? [entry.create] : []));
+      if (preview.some((entry) => entry.status === "error" || entry.status === "review"))
+        return {
+          outcome: "changed",
+          preview,
+          created: 0,
+          message: "请先处理所有错误和待核对记录，或明确跳过后再提交。",
+        };
       if (!creates.length)
         return { outcome: "empty", preview, created: 0, message: "没有可导入的记录。" };
       let response: ActivityBulkMutationResult;

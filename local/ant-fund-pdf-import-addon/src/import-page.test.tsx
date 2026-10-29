@@ -100,11 +100,14 @@ async function mount(ctx: AddonContext, rtl = false) {
     ),
   );
 }
-async function upload() {
+async function upload(advance = true) {
+  if (!container.querySelector('input[type="file"]'))
+    await select("流水格式", "蚂蚁基金交易明细 PDF");
   const file = new File(["synthetic"], "synthetic.pdf", { type: "application/pdf" });
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, "files", { configurable: true, value: [file] });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+  if (advance) await click("下一步");
 }
 function context() {
   const openImport = vi.fn(async () => {});
@@ -131,6 +134,25 @@ function context() {
   return { ctx, openImport, setLeaveGuard };
 }
 describe("PDF preparation UI", () => {
+  it("解析后展示预览，未完成的交易必须编辑或跳过才能继续", async () => {
+    const { ctx, openImport } = context();
+    await mount(ctx);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    await upload(false);
+    expect(container.textContent).toContain("文件预览");
+    await click("下一步");
+    await select("人民币投资账户", "Test CNY");
+    const next = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "下一步",
+    )!;
+    expect(next.disabled).toBe(true);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="选择来源 2"]')!.click(),
+    );
+    await click("跳过", container.querySelector('[aria-label="映射批量操作"]')!);
+    expect(next.disabled).toBe(false);
+    expect(openImport).not.toHaveBeenCalled();
+  });
   it("hands drafts to the host instead of searching or importing directly", async () => {
     const { ctx, openImport, setLeaveGuard } = context();
     vi.mocked(parseStatement).mockResolvedValue([rows[0]]);
@@ -138,6 +160,7 @@ describe("PDF preparation UI", () => {
     await upload();
     await select("人民币投资账户", "Test CNY");
     expect(setLeaveGuard).toHaveBeenCalledWith(true);
+    await click("下一步");
     await click("下一步");
     expect(openImport).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -159,7 +182,7 @@ describe("PDF preparation UI", () => {
     await upload();
     await click("取消");
     await click("继续编辑", document.querySelector('[role="alertdialog"]')!);
-    expect(container.textContent).toContain("在此修正原始交易");
+    expect(container.textContent).toContain("已识别 / 已跳过");
     expect(openImport).not.toHaveBeenCalled();
   });
   it("retains preparation after a failed handoff and allows retry", async () => {
@@ -169,6 +192,7 @@ describe("PDF preparation UI", () => {
     await mount(ctx);
     await upload();
     await select("人民币投资账户", "Test CNY");
+    await click("下一步");
     await click("下一步");
     expect(container.textContent).toContain("操作失败");
     await click("下一步");

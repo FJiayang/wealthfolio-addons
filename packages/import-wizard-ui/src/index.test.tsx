@@ -3,7 +3,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { FormattingProvider } from "@wealthfolio/ui";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { FileDropzone, ImportWizardLayout, StepNavigation, ImportStatusCards } from ".";
+import {
+  FileDropzone,
+  ImportWizardLayout,
+  StepNavigation,
+  ImportStatusCards,
+  ImportReviewTable,
+  ImportFilePreview,
+} from ".";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -24,6 +31,57 @@ const labels = {
   processing: "处理中",
   hint: "PDF",
 };
+
+it("筛选后批量跳过仅操作当前数据中的稳定 ID，操作后清除选择", async () => {
+  const onSkip = vi.fn();
+  const data = [
+    { id: "original-9", amount: "10" },
+    { id: "original-2", amount: "20" },
+  ];
+  const render = async (rows: typeof data) =>
+    act(async () =>
+      root.render(
+        <FormattingProvider locale="zh-CN">
+          <ImportReviewTable
+            data={rows}
+            columns={[{ id: "amount", accessorKey: "amount", header: "金额" }]}
+            getRowId={(row) => row.id}
+            onSkip={onSkip}
+            onRestore={vi.fn()}
+          />
+        </FormattingProvider>,
+      ),
+    );
+  await render(data);
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="选择全部行"]')!.click());
+  await render([data[1]]);
+  const toolbar = container.querySelector('[role="toolbar"]')!;
+  expect(toolbar.textContent).toContain("已选择 1 行");
+  await act(async () =>
+    [...toolbar.querySelectorAll("button")]
+      .find((button) => button.textContent === "跳过")!
+      .click(),
+  );
+  expect(onSkip).toHaveBeenCalledWith([data[1]]);
+  expect(container.querySelector('[role="toolbar"]')).toBeNull();
+});
+
+it("文件预览提供原始内容切换", async () => {
+  await act(async () =>
+    root.render(
+      <FormattingProvider locale="zh-CN">
+        <ImportFilePreview headers={["金额"]} rows={[["10"]]} original={<pre>original csv</pre>} />
+      </FormattingProvider>,
+    ),
+  );
+  expect(container.textContent).toContain("10");
+  await act(async () =>
+    [...container.querySelectorAll<HTMLElement>('[role="tab"]')]
+      .find((tab) => tab.textContent === "原始文件")!
+      .click(),
+  );
+  expect(container.textContent).toContain("original csv");
+});
 
 it("支持拖入文件，处理中及已有文件时不替换，并可移除后重新选择", async () => {
   const onFileChange = vi.fn();

@@ -40,6 +40,16 @@ const draft: DraftRow = {
 };
 
 describe("PDF draft handoff", () => {
+  it("requires a six-digit fund code before handoff, while skipped rows remain inspectable", () => {
+    const invalid = { ...draft, legs: [{ ...leg, code: "" }] };
+    expect(() => toImportRequest([invalid], "account", "statement")).toThrow("asset");
+    const request = toImportRequest(
+      [draft, { ...invalid, excluded: true }],
+      "account",
+      "statement",
+    );
+    expect(request.rows[1].excluded).toBe(true);
+  });
   it("preserves final cash and charges each fee once without binding assets", () => {
     expect(unitPrice(leg)).toBe("99.96");
     expect(unitPrice({ ...leg, activityType: "SELL" })).toBe("100.04");
