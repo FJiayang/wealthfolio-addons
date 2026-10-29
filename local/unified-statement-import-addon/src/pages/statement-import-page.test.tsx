@@ -99,6 +99,18 @@ async function upload(lines = [csvRow()], advance = true) {
 }
 
 describe("shared statement wizard", () => {
+  it("映射完成仍明确提示人工核对，并说明表格编辑入口", async () => {
+    const { ctx } = context(JSON.stringify({ "信用卡&红包": "cash" }));
+    await renderPage(ctx);
+    await upload([csvRow({ method: "信用卡&红包" })]);
+    expect(container.textContent).toContain("仍需人工核对");
+    expect(container.textContent).toContain("映射完成后仍需核对交易");
+    await click("保存映射并预览");
+    expect(container.textContent).toContain("还有 1 笔记录需要处理");
+    expect(container.textContent).toContain("F2 或 Enter");
+    expect(container.textContent).toContain("勾选行首复选框");
+    expect(container.textContent).toContain("错误不能通过核对放行");
+  });
   it.each(["ltr", "rtl"])("%s 缺失付款方式在映射项下展示全部六笔关联流水", async (direction) => {
     document.documentElement.dir = direction;
     const { ctx, saveMany } = context();

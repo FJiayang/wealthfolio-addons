@@ -100,10 +100,16 @@ for (const direction of ["ltr", "rtl"]) {
       `账户映射：虚构信用卡(0000)&红包${direction}`,
       `${accountName} · 现金 · CNY`,
     );
+    await expect(frame.getByText("映射完成后仍需核对交易", { exact: true })).toBeVisible();
     await frame.getByRole("button", { name: "保存映射并预览" }).click();
     await expect(frame.getByRole("button", { name: "提交确认", exact: true })).toBeDisabled();
+    const pendingRow = frame.getByRole("row").filter({ hasText: "组合付款" });
+    for (const column of ["kind", "amount", "accountId"])
+      await expect(pendingRow.locator(`[data-column-id="${column}"] [data-cell-state="warning"]`)).toBeVisible();
+    await expect(frame.getByText(/双击“记账性质”/)).toBeVisible();
     await frame.getByRole("checkbox", { name: "选择行 3", exact: true }).check();
     await frame.getByRole("button", { name: "标记已核对", exact: true }).click();
+    await expect(pendingRow.locator('[data-cell-state="warning"]')).toHaveCount(0);
     await expect(frame.getByRole("button", { name: "提交确认", exact: true })).toBeEnabled();
     const amountCell = frame
       .getByRole("row")
@@ -115,6 +121,7 @@ for (const direction of ["ltr", "rtl"]) {
     await expect(amountCell.locator("input")).toBeVisible();
     await amountCell.locator("input").fill("29.50");
     await amountCell.locator("input").press("Enter");
+    await expect(amountCell.locator('[data-cell-state="warning"]')).toBeVisible();
     await expect(frame.getByRole("button", { name: "提交确认", exact: true })).toBeDisabled();
     await frame.getByRole("checkbox", { name: "选择行 3", exact: true }).check();
     await frame.getByRole("button", { name: "标记已核对", exact: true }).click();

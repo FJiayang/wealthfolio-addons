@@ -432,7 +432,26 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   );
   const columns = useMemo(
     () => [
-      { id: "line", accessorKey: "line", header: "#", size: 70, meta: { readOnly: true } },
+      {
+        id: "line",
+        accessorKey: "line",
+        header: (): string => "#",
+        size: 90,
+        meta: { readOnly: true, label: "来源行" },
+        cell: ({ row }: { row: { original: PreviewRow & { line: number } } }) => (
+          <span className="flex h-full items-center gap-1" title={row.original.reason}>
+            {n(row.original.line)}
+            {(row.original.status === "review" || row.original.status === "error") && (
+              <Badge variant={statusAppearance[row.original.status].variant} className="px-1">
+                <Icons.AlertCircle
+                  className="size-3"
+                  aria-label={labels[row.original.status]}
+                />
+              </Badge>
+            )}
+          </span>
+        ),
+      },
       {
         id: "kind",
         accessorKey: "kind",
@@ -750,13 +769,24 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                         icon: <Icons.CheckCircle className="size-4" />,
                       },
                       {
-                        label: "业务映射",
+                        label: "记账性质映射",
                         value: `${n(preview.filter((entry) => entry.status !== "excluded" && entry.status !== "duplicate").length - unresolvedKinds.length)} / ${n(preview.filter((entry) => entry.status !== "excluded" && entry.status !== "duplicate").length)}`,
                         tone: unresolvedKinds.length ? "warning" : "success",
                         icon: <Icons.CheckCircle className="size-4" />,
                       },
+                      {
+                        label: "仍需人工核对",
+                        value: n(preview.filter((entry) => entry.status === "review" && entry.row.reviewReason).length),
+                        tone: counts.review ? "warning" : "success",
+                        icon: <Icons.AlertCircle className="size-4" />,
+                      },
                     ]}
                   />
+                  {preview.some((entry) => entry.status === "review" && entry.row.reviewReason) && (
+                    <AlertFeedback variant="warning" title="映射完成后仍需核对交易">
+                      账户和记账性质已填写，不代表组合支付等疑点已核实。下一步请核对实际扣款金额、性质和账户；可在审核表格中双击单元格修改，再选择记录并点击顶部“标记已核对”。
+                    </AlertFeedback>
+                  )}
                   {unresolvedMethods.length > 0 && (
                     <AlertFeedback variant="warning" title="请补齐账户映射">
                       仍有 {n(unresolvedMethods.length)} 项未映射，请选择账户或跳过对应记录。
@@ -1007,10 +1037,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   <ImportStatusCards items={statistics} />
                   <AlertFeedback
                     variant={blockedCount ? "warning" : "success"}
-                    title={blockedCount ? "需要核对" : `所有 ${n(counts.ready)} 笔记录已就绪`}
+                    title={blockedCount ? `还有 ${n(blockedCount)} 笔记录需要处理` : `所有 ${n(counts.ready)} 笔记录已就绪`}
                   >
                     {blockedCount
-                      ? "不计收支、组合支付及未知状态需核实性质、实际扣款金额和账户，再选择记录并标记已核对。转账、还款、理财请跳过。所有错误及待核对记录必须处理后才能继续。"
+                      ? "黄色单元格需要核实，红色单元格需要修正。双击“记账性质”“确认金额”或“目标账户”即可编辑，也可选中单元格后按 F2 或 Enter。核实实际扣款金额、性质和账户后，勾选行首复选框，在顶部点击“标记已核对”。转账、还款、理财请跳过；错误不能通过核对放行。"
                       : "您的数据已准备好导入，仍可审核并调整。已跳过及重复记录不会提交。"}
                   </AlertFeedback>
                   {step === "preview" && (
@@ -1020,6 +1050,15 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       columns={columns}
                       getRowId={(entry) => String(entry.line)}
                       busy={busy}
+                      getCellState={(rowIndex, columnId) => {
+                        const entry = gridRows[rowIndex];
+                        if (!entry || !["kind", "amount", "accountId"].includes(columnId)) return null;
+                        if (entry.status === "error")
+                          return { type: "error", messages: [entry.reason] };
+                        if (entry.status === "review")
+                          return { type: "warning", messages: [entry.reason, "双击编辑，或选中后按 F2 / Enter；核实后选择行并标记已核对"] };
+                        return null;
+                      }}
                       canSelect={(entry) => !entry.row.excluded && entry.status !== "duplicate"}
                       onSkip={(entries) =>
                         entries.forEach((entry) => changeDecision(entry.line, { excluded: true }))

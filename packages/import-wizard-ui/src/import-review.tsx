@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -161,6 +161,7 @@ export function ImportReviewTable<T>({
   canSelect,
   filters,
   onDataChange,
+  getCellState,
 }: {
   data: T[];
   columns: Parameters<typeof useDataGrid<T>>[0]["columns"];
@@ -173,10 +174,21 @@ export function ImportReviewTable<T>({
   canSelect?(row: T): boolean;
   filters?: ReactNode;
   onDataChange?: Parameters<typeof useDataGrid<T>>[0]["onDataChange"];
+  getCellState?: (rowIndex: number, columnId: string) => {
+    type: "error" | "warning";
+    messages: string[];
+  } | null;
 }) {
   const dir = useDirection();
   const { formatDecimal } = useNumberFormatting();
   const [visible, setVisible] = useState(false);
+  // Match the host grid: validation must read the current draft during render.
+  const cellStateRef = useRef(getCellState);
+  cellStateRef.current = getCellState;
+  const readCellState = useCallback(
+    (rowIndex: number, columnId: string) => cellStateRef.current?.(rowIndex, columnId) ?? null,
+    [],
+  );
   const selectionColumn = useMemo<Parameters<typeof useDataGrid<T>>[0]["columns"][number]>(
     () => ({
       id: "select",
@@ -234,6 +246,7 @@ export function ImportReviewTable<T>({
     enableMultiRowSelection: true,
     enableSearch: false,
     onDataChange,
+    meta: { getCellState: readCellState },
     initialState: { columnPinning: { left: ["select"] } },
   });
   const selected = grid.table.getSelectedRowModel().rows.map((row) => row.original);
