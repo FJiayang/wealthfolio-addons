@@ -10,6 +10,24 @@ const cash = account();
 const mapping = { 账户余额: "cash" };
 
 describe("预览、来源和重复检测", () => {
+  it.each(["餐饮美食", "  餐饮美食  ", "", "   "])("将原始分类 %j 写入备注，保留原备注与来源", (category) => {
+    const parsed = rows(csvRow());
+    parsed[0].source.category = category;
+    parsed[0].source.remark = "原始备注";
+    const create = buildPreview(parsed, [cash], [], mapping, {})[0].create!;
+    expect(create.comment).toContain("虚构商户 · 测试商品 · 原始备注");
+    expect(create.comment).toContain("支付宝订单号：fictional-order-1");
+    if (category.trim()) expect(create.comment).toContain("支付宝分类：餐饮美食");
+    else expect(create.comment).not.toContain("支付宝分类：");
+    expect(create.metadata).toMatchObject({ [METADATA_KEY]: { sources: [expect.objectContaining({ category })] } });
+  });
+  it("旧版未包含分类备注的账目仍识别为重复且不覆盖", () => {
+    const parsed = rows(csvRow());
+    const create = buildPreview(parsed, [cash], [], mapping, {})[0].create!;
+    const legacy = activity({ ...create, comment: "用户保留的旧备注" });
+    expect(buildPreview(parsed, [cash], [legacy], mapping, {})[0]).toMatchObject({ status: "duplicate", create: undefined });
+    expect(legacy.notes).toBe("用户保留的旧备注");
+  });
   it.skipIf(!process.env.STATEMENT_DEMO_PATH)("DEMO 预览默认跳过不计收支，不生成个人账目", () => {
     const parsed = parseStatement(readFileSync(process.env.STATEMENT_DEMO_PATH!), "DEMO.csv").rows;
     const preview = buildPreview(parsed, [cash], [], {}, {});

@@ -65,6 +65,29 @@ for (const direction of ["ltr", "rtl"]) {
       },
     });
     expect(cashResponse.ok()).toBe(true);
+    const cashAccount = await cashResponse.json();
+    expect((await page.request.put(`${base}/api/v1/spending/settings`, {
+      headers, data: { enabled: true, accountIds: [cashAccount.id] },
+    })).ok()).toBe(true);
+    const taxonomyResponse = await page.request.get(`${base}/api/v1/taxonomies/spending_categories`, { headers });
+    expect(taxonomyResponse.ok()).toBe(true);
+    const category = (await taxonomyResponse.json()).categories.find((item) => item.key === "food");
+    expect(category).toBeTruthy();
+    const ruleResponse = await page.request.post(`${base}/api/v1/spending/rules`, {
+      headers,
+      data: {
+        name: `支付宝来源分类 ${direction}`,
+        pattern: "支付宝分类：餐饮美食",
+        matchType: "contains",
+        taxonomyId: "spending_categories",
+        categoryId: category.id,
+        activityType: "WITHDRAWAL",
+        priority: 100,
+        isGlobal: false,
+        accountId: cashAccount.id,
+      },
+    });
+    expect(ruleResponse.ok()).toBe(true);
 
     await page.goto(`${base}/addons/unified-statement-import-addon?dir=${direction}`);
     const frame = page.frameLocator("iframe");
@@ -183,7 +206,8 @@ for (const direction of ["ltr", "rtl"]) {
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
     await frame.getByRole("button", { name: "提交确认", exact: true }).click();
     await frame.getByRole("button", { name: /导入.*2.*笔/ }).click();
-    await expect(frame.getByRole("heading", { name: "导入完成", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/activities\?tab=spending$/);
+    await expect(page.getByRole("button", { name: "Spending", exact: true })).toHaveAttribute("aria-current", "page");
     const savedResponse = await page.request.post(`${base}/api/v1/activities/search`, {
       headers,
       data: { page: 0, pageSize: 100, filters: {} },
@@ -193,6 +217,14 @@ for (const direction of ["ltr", "rtl"]) {
       (activity) => activity.accountName === accountName,
     );
     expect(saved).toHaveLength(2);
+    for (const activity of saved) {
+      expect(activity.comment ?? activity.notes).toContain("支付宝分类：餐饮美食");
+      await expect.poll(async () => {
+        const response = await page.request.get(`${base}/api/v1/spending/activities/${activity.id}/assignments`, { headers });
+        expect(response.ok()).toBe(true);
+        return (await response.json()).map((assignment) => assignment.categoryId);
+      }, { timeout: 20_000 }).toContain(category.id);
+    }
     expect(saved.map((activity) => Number(activity.amount)).sort((a, b) => a - b)).toEqual([
       12.3, 28.25,
     ]);

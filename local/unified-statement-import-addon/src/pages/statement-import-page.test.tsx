@@ -6,6 +6,7 @@ import type {
   AddonContext,
   Activity,
   ActivityBulkMutationRequest,
+  ActivityBulkMutationResult,
 } from "@wealthfolio/addon-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
@@ -56,7 +57,7 @@ function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Acc
     }),
     delete: vi.fn(async () => {}),
   };
-  const saveMany = vi.fn(async ({ creates = [] }: ActivityBulkMutationRequest) => {
+  const saveMany = vi.fn(async ({ creates = [] }: ActivityBulkMutationRequest): Promise<ActivityBulkMutationResult> => {
     const created = creates.map((create, index) => activity(create, `ui-${index}`));
     stored.push(...created);
     return { created, updated: [], deleted: [], createdMappings: [], errors: [] };
@@ -66,6 +67,8 @@ function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Acc
     api: {
       accounts: { getAll: vi.fn(async () => accounts) },
       activities: { getAll: vi.fn(async () => [...stored]), saveMany },
+      navigation: { navigate: vi.fn(async () => {}) },
+      toast: { success: vi.fn() },
       storage,
     },
   } as unknown as AddonContext;
@@ -379,10 +382,57 @@ describe("shared statement wizard", () => {
       sources: [{ amount: "1234.56", originalTime: "2025/12/31 14:23" }],
     });
     expect(container.textContent).toContain("已新增 1 笔");
+    expect(ctx.api.navigation.navigate).toHaveBeenCalledWith("/activities?tab=spending");
+    expect(ctx.api.toast.success).toHaveBeenCalledWith("导入成功，分类由系统后台处理");
+    expect(ctx.router.setLeaveGuard).toHaveBeenLastCalledWith(false);
     expect(container.querySelector('[aria-current="step"]')).toBeNull();
     await renderPage(ctx, "zh-TW", "zh-Hant", "Asia/Taipei");
     expect(container.querySelector("h1")!.textContent).toBe("账单导入");
     expect(container.textContent).toContain("已新增 1 笔");
+  });
+  it("导航失败保留成功结果，查看收支重试不会再次保存账目", async () => {
+    const { ctx, saveMany, stored } = context();
+    vi.mocked(ctx.api.navigation.navigate).mockRejectedValueOnce(new Error("navigation failed"));
+    await renderPage(ctx);
+    await upload();
+    await click("保存映射并预览");
+    await click("提交确认");
+    await click("导入 1 笔");
+    expect(container.textContent).toContain("导入完成");
+    expect(container.textContent).toContain("无法打开收支页");
+    expect(container.textContent).not.toContain("提交或结果核对失败");
+    await click("查看收支");
+    expect(ctx.api.navigation.navigate).toHaveBeenCalledTimes(2);
+    expect(saveMany).toHaveBeenCalledTimes(1);
+    expect(stored).toHaveLength(1);
+    expect(container.textContent).not.toContain("无法打开收支页");
+  });
+  it("提交前账户变化返回预览，不保存或自动跳转", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    await upload();
+    await click("保存映射并预览");
+    await click("提交确认");
+    vi.mocked(ctx.api.accounts.getAll).mockResolvedValue([]);
+    await click("导入 1 笔");
+    expect(container.textContent).toContain("预览已刷新");
+    expect(saveMany).not.toHaveBeenCalled();
+    expect(ctx.api.navigation.navigate).not.toHaveBeenCalled();
+  });
+  it("部分保存停留结果页，不自动跳转", async () => {
+    const { ctx, saveMany } = context();
+    saveMany.mockImplementationOnce(async ({ creates = [] }) => ({
+      created: [activity(creates[0])], updated: [], deleted: [], createdMappings: [],
+      errors: [{ action: "create", message: "部分失败" }],
+    }));
+    await renderPage(ctx);
+    await upload([csvRow(), csvRow({ id: "second" })]);
+    await click("保存映射并预览");
+    await click("提交确认");
+    await click("导入 2 笔");
+    expect(ctx.api.navigation.navigate).not.toHaveBeenCalled();
+    expect(ctx.api.toast.success).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("保存未完整完成");
   });
   it("宿主使用英文时仍显示中文错误及物理行号", async () => {
     const { ctx } = context();
@@ -453,6 +503,7 @@ describe("shared statement wizard", () => {
     saveMany.mockRejectedValueOnce(new Error("lost response"));
     await click("导入 1 笔");
     expect(container.textContent).toContain("结果待核对");
+    expect(ctx.api.navigation.navigate).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("导入完成");
     await click("返回预览");
     expect(container.querySelector('[role="grid"]')).toBeTruthy();

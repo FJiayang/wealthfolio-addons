@@ -176,6 +176,7 @@ export function buildPreview(
         source.merchant,
         source.description,
         source.remark,
+        source.category.trim() ? `支付宝分类：${source.category.trim()}` : "",
         `${getStatementParser(source.system).recordIdLabel}：${source.recordId}`,
       ]
         .filter(Boolean)

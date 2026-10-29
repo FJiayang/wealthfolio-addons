@@ -132,6 +132,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [selectedMappingRows, setSelectedMappingRows] = useState<number[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [navigationError, setNavigationError] = useState("");
   const [submission, setSubmission] = useState<Awaited<
     ReturnType<ReturnType<typeof createSubmitter>>
   > | null>(null);
@@ -324,6 +325,17 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     }
   }
 
+  async function viewSpending(notify = false) {
+    setNavigationError("");
+    try {
+      await ctx.router.setLeaveGuard(false);
+      if (notify) ctx.api.toast.success("导入成功，分类由系统后台处理");
+      await ctx.api.navigation.navigate("/activities?tab=spending");
+    } catch {
+      setNavigationError("无法打开收支页，请点击“查看收支”重试。已保存的账目不会再次提交。");
+    }
+  }
+
   async function submit() {
     if (submitting.current || blockedCount || !counts.ready) return;
     submitting.current = true;
@@ -341,6 +353,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       setAccounts(currentAccounts);
       setActivities(currentActivities);
       setStep(result.outcome === "changed" || result.outcome === "empty" ? "preview" : "result");
+      if (result.outcome === "success") await viewSpending(true);
     } catch {
       setError("提交或结果核对失败。请点击“刷新核对”重新读取账目后再提交；请勿直接重复导入。");
       setLoaded(false);
@@ -401,6 +414,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setStatusFilter("");
     setFile(null);
     setSubmission(null);
+    setNavigationError("");
     setStatement(null);
     setMappingChoices({});
     setDecisions({});
@@ -669,6 +683,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               {(error || evaluated.error) && (
                 <AlertFeedback variant="error" title={"错误"} role="alert">
                   {error || evaluated.error}
+                </AlertFeedback>
+              )}
+              {navigationError && (
+                <AlertFeedback variant="warning" title="页面跳转失败" role="alert">
+                  {navigationError}
                 </AlertFeedback>
               )}
               {message && step !== "result" && (
@@ -1174,6 +1193,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     },
                   ]}
                 >
+                  <Button disabled={busy} onClick={() => void viewSpending()}>
+                    查看收支
+                  </Button>
                   <Button
                     variant="outline"
                     onClick={() => {

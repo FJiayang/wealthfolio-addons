@@ -15,4 +15,4 @@ pnpm --filter ant-fund-pdf-import-addon bundle
 pnpm test:e2e --config ../wealthfolio-addons/e2e/playwright.config.mjs
 ```
 
-覆盖格式选择、CSV/PDF 原文件预览、映射阻断、账单疑点核对、筛选后批量跳过／恢复、账单保存、基金交接宿主，以及 LTR/RTL、浅色/深色截图。结果保存在本目录的 `test-results/`。
+覆盖格式选择、CSV/PDF 原文件预览、映射阻断、账单疑点核对、筛选后批量跳过／恢复、账单保存、原始分类备注驱动宿主异步归类、成功跳转收支页、基金交接宿主，以及 LTR/RTL、浅色/深色截图。测试规则仅创建于隔离数据库，不由插件调用分类接口。结果保存在本目录的 `test-results/`。
