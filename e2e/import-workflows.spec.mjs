@@ -80,7 +80,7 @@ for (const direction of ["ltr", "rtl"]) {
     const text = [header, records[0], records[3]]
       .join("\n")
       .replaceAll("synthetic-order-", `e2e-${direction}-`)
-      .replaceAll("账户余额", `账户余额${direction}`)
+      .replaceAll("账户余额", accountName)
       .replaceAll("虚构信用卡(0000)&红包", `虚构信用卡(0000)&红包${direction}`);
     await frame
       .locator('input[type="file"]')
@@ -90,9 +90,16 @@ for (const direction of ["ltr", "rtl"]) {
     await expect(frame.locator("pre")).toContainText("交易订单号");
     await frame.getByRole("button", { name: "补齐映射", exact: true }).click();
     await expect(frame.getByRole("button", { name: "保存映射并预览" })).toBeDisabled();
-    for (const method of ["账户余额", "虚构信用卡(0000)&红包"]) {
-      await choose(frame, `账户映射：${method}${direction}`, `${accountName} · 现金 · CNY`);
-    }
+    await frame.locator("summary").filter({ hasText: "已映射 / 已跳过" }).click();
+    await expect(
+      frame.getByRole("combobox", { name: `账户映射：${accountName}`, exact: true }),
+    ).toContainText(accountName);
+    await expect(frame.getByText("自动识别", { exact: true })).toBeAttached();
+    await choose(
+      frame,
+      `账户映射：虚构信用卡(0000)&红包${direction}`,
+      `${accountName} · 现金 · CNY`,
+    );
     await frame.getByRole("button", { name: "保存映射并预览" }).click();
     await expect(frame.getByRole("button", { name: "提交确认", exact: true })).toBeDisabled();
     await frame.getByRole("checkbox", { name: "选择行 3", exact: true }).check();
