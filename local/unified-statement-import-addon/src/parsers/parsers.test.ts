@@ -22,6 +22,7 @@ describe("支付宝解析", () => {
     expect(rows.filter((row) => row.source.direction === "收入")).toHaveLength(4);
     expect(rows.filter((row) => row.source.direction === "不计收支")).toHaveLength(22);
     expect(rows.filter((row) => row.excluded)).toHaveLength(2);
+    expect(rows.filter((row) => row.defaultExcluded)).toHaveLength(20);
     expect(rows[0].source).toMatchObject({
       lineNumber: 5,
       accountHint: "fictional-account",
@@ -66,6 +67,8 @@ describe("支付宝解析", () => {
     for (const row of rows.slice(1, 4)) expect(row.reviewReason).toBeTruthy();
     expect(rows[4].kind).toBe("refund");
     expect(rows[4].reviewReason).toBeUndefined();
+    expect(rows[3].defaultExcluded).toBe(true);
+    expect(rows[4].defaultExcluded).toBe(false);
   });
   it("拒绝缺列、重复列、坏引号，报告坏金额和不一致行", () => {
     expect(() => parse("交易时间,金额\n2025/1/1,1")).toThrow("必需列");
@@ -84,5 +87,6 @@ describe("支付宝解析", () => {
       ),
     ).toEqual([26, 4, 22]);
     expect(rows.filter((row) => row.excluded).length).toBe(2);
+    expect(rows.filter((row) => row.defaultExcluded).length).toBe(20);
   });
 });

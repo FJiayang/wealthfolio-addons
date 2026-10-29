@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { account } from "../test-fixtures";
 import { inferAccount, normalizeInstrument, resolveAccount } from "./account-matching";
+import { bankAliases } from "./bank-aliases";
 
 const card = {
   ...account("card", "CREDIT_CARD"),
@@ -9,6 +10,37 @@ const card = {
 };
 
 describe("账户推断", () => {
+  it.each(bankAliases)("银行别名 $alias 双向匹配 $name", ({ alias, name }) => {
+    expect(normalizeInstrument(`${alias}信用卡(1234)`)).toEqual({
+      base: `${name}信用卡`,
+      suffix: "1234",
+    });
+    for (const [method, target] of [
+      [alias, name],
+      [name, alias],
+    ]) {
+      expect(
+        inferAccount(`${method}信用卡(1234)`, [{ ...card, name: `${target}信用卡` }]).accountId,
+      ).toBe("card");
+    }
+  });
+
+  it("银行别名保留尾号、卡种、歧义及人工映射限制", () => {
+    const agri = { ...card, name: "农业银行信用卡", accountNumber: undefined };
+    const method = "中国农业银行信用卡(7559)";
+    expect(inferAccount(method, [agri])).toMatchObject({
+      accountId: "card",
+      candidates: [{ reasons: expect.arrayContaining(["银行全称或简称等价匹配"]) }],
+    });
+    expect(inferAccount(method, [{ ...agri, accountNumber: "1234" }]).candidates).toEqual([]);
+    expect(inferAccount(method, [agri, { ...agri, id: "other" }]).accountId).toBeUndefined();
+    expect(inferAccount(method, [{ ...agri, name: "农行储蓄卡" }]).candidates).toEqual([]);
+    expect(inferAccount(`${method}&商家优惠抵扣`, [agri]).accountId).toBe("card");
+    expect(resolveAccount(method, [agri, account()], { [method]: "cash" }).accountId).toBe("cash");
+    for (const name of ["平安保险", "中信证券", "我的农行信用卡", "兴业理财"]) {
+      expect(normalizeInstrument(name).base).toBe(name);
+    }
+  });
   it("读取到对应账户后恢复余额宝、信用卡及组合付款的自动推断", () => {
     const accounts = [
       { ...account("wallet"), name: "余额宝", trackingMode: "HOLDINGS" as const },
@@ -79,7 +111,6 @@ describe("账户推断", () => {
 
   it("短前缀、包含和泛化名称只推荐，不自动填入", () => {
     for (const [method, name] of [
-      ["招行信用卡", "招行"],
       ["信用卡", "招商银行信用卡"],
       ["信用卡", "信用卡"],
       ["账户余额", "账户余额"],

@@ -116,7 +116,7 @@ describe("shared statement wizard", () => {
   it("缺失记账性质阻断映射，选中问题记录后可从顶部跳过", async () => {
     const { ctx, saveMany } = context();
     await renderPage(ctx);
-    await upload([csvRow(), csvRow({ id: "pending", direction: "不计收支" })]);
+    await upload([csvRow(), csvRow({ id: "pending", direction: "未知" })]);
     const next = [...container.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("保存映射并预览"),
     )!;
@@ -134,6 +134,36 @@ describe("shared statement wizard", () => {
     await click("保存映射并预览");
     expect(container.querySelector('[aria-label="第 3 行确认"]')).toBeNull();
     expect(saveMany).not.toHaveBeenCalled();
+  });
+  it("不计收支默认跳过不阻塞映射，顶部恢复后重新要求性质与账户", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    await upload([csvRow(), csvRow({ id: "company", direction: "不计收支", method: "因公付" })]);
+    const next = () =>
+      [...container.querySelectorAll("button")].find((button) =>
+        button.textContent?.includes("保存映射并预览"),
+      )!;
+    expect(next().disabled).toBe(false);
+    expect(container.textContent).not.toContain("需要补齐 · 1 笔记账性质");
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="选择付款方式 因公付"]')!.click(),
+    );
+    await click("取消跳过");
+    expect(next().disabled).toBe(true);
+    expect(container.textContent).toContain("需要补齐 · 1 笔记账性质");
+    expect(container.textContent).toContain("请补齐账户映射");
+    expect(saveMany).not.toHaveBeenCalled();
+    await click("上一步");
+    await click("补齐映射");
+    expect(next().disabled).toBe(true);
+    await click("上一步");
+    await click("移除文件");
+    const discard = [...document.querySelector('[role="alertdialog"]')!.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("取消本次导入"))!;
+    await act(async () => discard.click());
+    await upload([csvRow(), csvRow({ id: "replacement", direction: "不计收支", method: "因公付" })]);
+    expect(next().disabled).toBe(false);
+    expect(container.querySelector('[aria-label="映射批量操作"]')).toBeNull();
   });
   it("余额宝持仓账户按名称预填并可提交，来源仍以 CNY 入账", async () => {
     const wallet = { ...account("yuebao"), name: "余额宝", trackingMode: "HOLDINGS" as const };

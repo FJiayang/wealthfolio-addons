@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { parseStatement } from "../parsers";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { buildPreview, METADATA_KEY, restoreMappings } from "./ledger";
@@ -9,6 +10,51 @@ const cash = account();
 const mapping = { 账户余额: "cash" };
 
 describe("预览、来源和重复检测", () => {
+  it.skipIf(!process.env.STATEMENT_DEMO_PATH)("DEMO 预览默认跳过不计收支，不生成个人账目", () => {
+    const parsed = parseStatement(readFileSync(process.env.STATEMENT_DEMO_PATH!), "DEMO.csv").rows;
+    const preview = buildPreview(parsed, [cash], [], {}, {});
+    const neutral = preview.filter((entry) => entry.row.source.direction === "不计收支");
+    expect(neutral).toHaveLength(22);
+    expect(neutral.every((entry) => entry.status === "excluded" && !entry.create)).toBe(true);
+    expect(preview.filter((entry) => entry.reason === "不计收支，默认跳过个人记账")).toHaveLength(20);
+  });
+  it("不计收支默认跳过，恢复后必须补齐并核对，交易关闭不能恢复", () => {
+    const parsed = rows(csvRow({ direction: "不计收支", method: "因公付" }));
+    expect(buildPreview(parsed, [], [], {}, {})[0]).toMatchObject({
+      status: "excluded",
+      reason: "不计收支，默认跳过个人记账",
+      create: undefined,
+    });
+    expect(buildPreview(parsed, [cash], [], {}, { 2: { excluded: false } })[0].status).toBe(
+      "review",
+    );
+    const restored = { excluded: false, kind: "expense" as const, accountId: "cash" };
+    expect(buildPreview(parsed, [cash], [], {}, { 2: restored })[0]).toMatchObject({
+      status: "review",
+      create: undefined,
+    });
+    expect(
+      buildPreview(
+        parsed,
+        [cash],
+        [],
+        {},
+        { 2: { ...restored, confirmed: true, amount: "bad" } },
+      )[0].status,
+    ).toBe("error");
+    expect(
+      buildPreview(parsed, [cash], [], {}, { 2: { ...restored, confirmed: true } })[0].status,
+    ).toBe("ready");
+    const closed = rows(csvRow({ direction: "不计收支", status: "交易关闭" }));
+    expect(
+      buildPreview(closed, [cash], [], {}, { 2: { ...restored, confirmed: true } })[0],
+    ).toMatchObject({ status: "excluded", reason: "交易关闭" });
+    const refund = rows(csvRow({ direction: "不计收支", status: "退款成功" }));
+    expect(buildPreview(refund, [cash], [], mapping, {})[0]).toMatchObject({
+      status: "ready",
+      kind: "refund",
+    });
+  });
   it("人工核对不能绕过金额、账户或来源错误，字段校验优先展示", () => {
     const parsed = rows(csvRow({ method: "信用卡&红包" }));
     const decisions = {
@@ -54,11 +100,7 @@ describe("预览、来源和重复检测", () => {
     expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe(
       "review",
     );
-    for (const overrides of [
-      { status: "处理中" },
-      { method: `${method}&红包` },
-      { direction: "不计收支" },
-    ]) {
+    for (const overrides of [{ status: "处理中" }, { method: `${method}&红包` }]) {
       expect(
         buildPreview(rows(csvRow({ method, ...overrides })), accounts, [], {}, {})[0].status,
       ).toBe("review");

@@ -85,6 +85,7 @@ export const alipayParser: StatementParser = {
         },
         kind,
         excluded,
+        defaultExcluded: !excluded && direction === "不计收支" && kind !== "refund",
         reviewReason,
         error,
       };

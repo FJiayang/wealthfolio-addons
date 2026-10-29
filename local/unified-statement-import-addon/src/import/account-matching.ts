@@ -1,4 +1,5 @@
 import type { Account } from "@wealthfolio/addon-sdk";
+import { normalizeBankName } from "./bank-aliases";
 
 export type Mappings = Record<string, string>;
 export interface AccountCandidate {
@@ -8,7 +9,7 @@ export interface AccountCandidate {
   reasons: string[];
 }
 
-export function normalizeInstrument(value: string): { base: string; suffix?: string } {
+function readInstrument(value: string): { base: string; suffix?: string } {
   const normalized = value.normalize("NFKC").toLowerCase().trim();
   const tail = normalized.match(
     /(?:\(\s*[*x•·]*\s*(\d{4})\s*\)|(?:^|\s|[*x•·]+|尾号[:：]?)(\d{4}))\s*$/,
@@ -19,9 +20,26 @@ export function normalizeInstrument(value: string): { base: string; suffix?: str
   return { base: name.replace(/[\s\p{P}\p{S}]/gu, ""), suffix };
 }
 
-const genericNames = new Set(["信用卡", "贷记卡", "储蓄卡", "借记卡", "银行卡", "余额", "账户余额", "零钱"]);
+export function normalizeInstrument(value: string): { base: string; suffix?: string } {
+  const instrument = readInstrument(value);
+  return { ...instrument, base: normalizeBankName(instrument.base) };
+}
 
-export function inferAccount(paymentMethod: string, accounts: Account[]): {
+const genericNames = new Set([
+  "信用卡",
+  "贷记卡",
+  "储蓄卡",
+  "借记卡",
+  "银行卡",
+  "余额",
+  "账户余额",
+  "零钱",
+]);
+
+export function inferAccount(
+  paymentMethod: string,
+  accounts: Account[],
+): {
   candidates: AccountCandidate[];
   accountId?: string;
 } {
@@ -30,7 +48,9 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
   for (const account of accounts) {
     const name = normalizeInstrument(account.name);
     const number = normalizeInstrument(account.accountNumber ?? "");
-    const conflictingIdentity = Boolean(name.suffix && number.suffix && name.suffix !== number.suffix);
+    const conflictingIdentity = Boolean(
+      name.suffix && number.suffix && name.suffix !== number.suffix,
+    );
     const suffix = number.suffix ?? name.suffix;
     if (method.suffix && suffix && method.suffix !== suffix) continue;
     const sameSuffix = Boolean(method.suffix && method.suffix === suffix);
@@ -38,7 +58,8 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
     const accountPrefix = Boolean(method.base && name.base && method.base.startsWith(name.base));
     const methodPrefix = Boolean(method.base && name.base && name.base.startsWith(method.base));
     const contains = Boolean(
-      method.base && name.base &&
+      method.base &&
+      name.base &&
       (method.base.includes(name.base) || name.base.includes(method.base)),
     );
     if (!contains) continue;
@@ -62,11 +83,17 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
       reasons.push("名称部分匹配");
     }
     if (conflictingIdentity) reasons.push("账户名与账号尾号不一致");
+    if (
+      readInstrument(paymentMethod).base !== method.base ||
+      readInstrument(account.name).base !== name.base
+    )
+      reasons.push("银行全称或简称等价匹配");
     const specificName = !genericNames.has(name.base);
-    const high = !conflictingIdentity && (
-      sameSuffix || (sameName && specificName) ||
-      (accountPrefix && specificName && name.base.length >= 4)
-    );
+    const high =
+      !conflictingIdentity &&
+      (sameSuffix ||
+        (sameName && specificName) ||
+        (accountPrefix && specificName && name.base.length >= 4));
     candidates.push({
       accountId: account.id,
       score,
@@ -82,11 +109,11 @@ export function inferAccount(paymentMethod: string, accounts: Account[]): {
 export function resolveAccount(paymentMethod: string, accounts: Account[], mappings: Mappings) {
   const inference = inferAccount(paymentMethod, accounts);
   const mapped = Object.hasOwn(mappings, paymentMethod);
-  const accountId = mapped ? mappings[paymentMethod] : inference.accountId ?? "";
+  const accountId = mapped ? mappings[paymentMethod] : (inference.accountId ?? "");
   const available = accounts.some((account) => account.id === accountId);
   return {
     candidates: inference.candidates,
     accountId: available ? accountId : "",
-    origin: available ? mapped ? "saved" : "inferred" : "pending",
+    origin: available ? (mapped ? "saved" : "inferred") : "pending",
   } as const;
 }

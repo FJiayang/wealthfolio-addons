@@ -24,6 +24,7 @@ export interface StatementRow {
   source: StatementSource;
   kind?: EntryKind;
   excluded: boolean;
+  defaultExcluded?: boolean;
   reviewReason?: string;
   error?: string;
 }

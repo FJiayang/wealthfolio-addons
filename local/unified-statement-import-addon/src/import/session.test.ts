@@ -45,9 +45,17 @@ function mockHost() {
 describe("SDK 提交", () => {
   it("未处理的疑点阻断整个提交，不隐式导入部分记录", async () => {
     const { host, submit } = mockHost();
-    const reviewed = buildPreview(rows, accounts, [], mapping, {});
-    expect((await submit(rows, mapping, {}, reviewed)).created).toBe(0);
+    const restored = { 3: { excluded: false } };
+    const reviewed = buildPreview(rows, accounts, [], mapping, restored);
+    expect((await submit(rows, mapping, restored, reviewed)).created).toBe(0);
     expect(host.activities.saveMany).not.toHaveBeenCalled();
+  });
+  it("默认跳过的不计收支不进入保存请求", async () => {
+    const { host, submit } = mockHost();
+    const reviewed = buildPreview(rows, accounts, [], mapping, {});
+    expect((await submit(rows, mapping, {}, reviewed)).created).toBe(1);
+    expect(host.activities.saveMany.mock.calls[0][0].creates).toHaveLength(1);
+    expect(host.activities.saveMany.mock.calls[0][0].creates![0].comment).not.toContain("pending");
   });
   it("提交时重新推断账户，新出现的高置信账户使旧预览失效", async () => {
     const { host, submit } = mockHost();

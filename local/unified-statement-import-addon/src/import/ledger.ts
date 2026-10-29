@@ -137,6 +137,8 @@ export function buildPreview(
     ): PreviewRow => ({ row, accountId, kind, amount, status, reason, create });
     if (row.excluded || decision.excluded)
       return result("excluded", row.excluded ? "交易关闭" : "用户排除");
+    if (row.defaultExcluded && decision.excluded !== false)
+      return result("excluded", "不计收支，默认跳过个人记账");
     if (row.error) return result("error", row.error);
     if (!source.recordId) return result("review", "缺少交易订单号，请排除并核实原始账单");
     const key = sourceKey(source);
