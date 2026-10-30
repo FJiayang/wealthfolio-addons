@@ -11,7 +11,10 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
-import { MAPPING_KEY } from "../import/ledger";
+import { MAPPING_KEY, MAPPING_V2_KEY } from "../import/ledger";
+import { mappingKey } from "../import/account-matching";
+import { RULES_KEY } from "../import/rules";
+const scoped = (method: string) => mappingKey({ system: "alipay", accountHint: "", paymentMethod: method });
 import { FormattingProvider } from "@wealthfolio/ui";
 let container: HTMLDivElement;
 let root: Root;
@@ -50,12 +53,14 @@ afterEach(async () => {
 
 function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Account[] = [account()]) {
   const stored: Activity[] = [];
+  const values = new Map<string, string>(saved ? [[MAPPING_KEY, saved]] : []);
   const storage = {
-    get: vi.fn(async () => saved),
+    get: vi.fn(async (key: string) => values.get(key) ?? null),
     set: vi.fn(async (_key: string, value: string) => {
       saved = value;
+      values.set(_key, value);
     }),
-    delete: vi.fn(async () => {}),
+    delete: vi.fn(async (key: string) => { values.delete(key); }),
   };
   const saveMany = vi.fn(async ({ creates = [] }: ActivityBulkMutationRequest): Promise<ActivityBulkMutationResult> => {
     const created = creates.map((create, index) => activity(create, `ui-${index}`));
@@ -101,11 +106,155 @@ async function upload(lines = [csvRow()], advance = true) {
   if (advance && !container.querySelector('[role="alert"]')) await click("补齐映射");
 }
 
+async function chooseKind(direction: string, kind: string) {
+  await act(async () =>
+    container.querySelector<HTMLElement>(`[aria-label="性质映射：支付宝 · ${direction}"]`)!.click(),
+  );
+  await act(async () =>
+    [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((option) => option.textContent === kind)!.click(),
+  );
+}
+
 describe("shared statement wizard", () => {
+  it.each(["ltr", "rtl"])("%s 同类未知性质只选择一次，空值单独分组且显示全部流水", async (direction) => {
+    document.documentElement.dir = direction;
+    const { ctx, stored } = context();
+    await renderPage(ctx);
+    await upload([
+      ...Array.from({ length: 6 }, (_, index) => csvRow({ id: `unknown-${index}`, direction: "未知", description: `关联商品-${index}` })),
+      csvRow({ id: "blank", direction: "" }),
+    ]);
+    expect(container.textContent).toContain("需要补齐 · 2 类记账性质 / 7 笔流水");
+    expect(container.querySelectorAll('[aria-label^="性质映射："]')).toHaveLength(2);
+    const table = container.querySelector('[aria-label="流水明细：性质：支付宝 · 未知"]')!;
+    expect(table.closest("details")!.open).toBe(true);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
+    for (const heading of ["来源行", "交易时间", "原始收支", "记账性质", "交易对方", "商品说明", "金额", "付款方式", "交易状态"])
+      expect(table.textContent).toContain(heading);
+    for (let index = 0; index < 6; index++) expect(table.textContent).toContain(`关联商品-${index}`);
+    await chooseKind("未知", "支出");
+    expect(container.querySelectorAll('[aria-label^="性质映射："]')).toHaveLength(1);
+    await chooseKind("未提供收支", "收入");
+    await click("保存映射并预览");
+    await click("提交确认");
+    await click("导入 7 笔");
+    expect(stored.map((entry) => entry.activityType)).toEqual([
+      ...Array(6).fill("WITHDRAWAL"), "DEPOSIT",
+    ]);
+  });
+
+  it("医保和代付成功直接识别支出，已知性质不被未知分组覆盖", async () => {
+    const { ctx, stored } = context();
+    await renderPage(ctx);
+    await upload([
+      csvRow({ id: "medical", status: "支付成功", description: "医保支付(不含自费)" }),
+      csvRow({ id: "proxy", status: "代付成功", description: "代付" }),
+      csvRow({ id: "income", direction: "收入" }),
+      csvRow({ id: "unknown", direction: "未知" }),
+    ]);
+    expect(container.textContent).not.toContain("异常状态待核对");
+    expect(container.querySelectorAll('[aria-label^="性质映射："]')).toHaveLength(1);
+    await chooseKind("未知", "支出");
+    await click("保存映射并预览");
+    await click("提交确认");
+    await click("导入 4 笔");
+    expect(stored.map((entry) => entry.activityType)).toEqual(["WITHDRAWAL", "WITHDRAWAL", "DEPOSIT", "WITHDRAWAL"]);
+  });
+
+  it.each(["ltr", "rtl"])("%s 异常状态保留性质，完整显示明细并在审核后放行", async (direction) => {
+    document.documentElement.dir = direction;
+    const { ctx, stored } = context();
+    await renderPage(ctx);
+    await upload(Array.from({ length: 6 }, (_, index) => csvRow({
+      id: `review-${index}`, status: "未知业务成功", description: `异常商品-${index}`,
+    })));
+    expect(container.querySelector('[aria-label^="性质映射："]')).toBeNull();
+    expect(container.textContent).toContain("异常状态待核对 · 1 类 / 6 笔流水");
+    const table = container.querySelector('[aria-label="流水明细：异常状态：支付宝 · 未知业务成功"]')!;
+    expect(table.closest("details")!.open).toBe(true);
+    const records = [...table.querySelectorAll("tbody tr")];
+    expect(records).toHaveLength(6);
+    records.forEach((row, index) => {
+      expect(row.textContent).toContain(`异常商品-${index}`);
+      expect(row.textContent).toContain("未知业务成功");
+      expect(row.textContent).toContain("支出");
+      expect(row.textContent).toContain("账户余额");
+    });
+    await click("保存映射并预览");
+    const submit = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("提交确认"))!;
+    expect(submit.disabled).toBe(true);
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="选择全部行"]')!.click());
+    await click("标记已核对");
+    expect(submit.disabled).toBe(false);
+    await click("提交确认");
+    await click("导入 6 笔");
+    expect(stored).toHaveLength(6);
+  });
+
+  it("分组跳过与恢复作用于全部关联行，新上传不继承分组选择", async () => {
+    const { ctx } = context();
+    await renderPage(ctx);
+    const unknown = [csvRow({ id: "one", direction: "未知" }), csvRow({ id: "two", direction: "未知" })];
+    await upload([csvRow(), ...unknown]);
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="选择性质分组 支付宝 · 未知"]')!.click());
+    await click("跳过");
+    expect(container.querySelector('[aria-label^="性质映射："]')).toBeNull();
+    await click("保存映射并预览");
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="选择全部行"]')!.click());
+    await click("取消跳过");
+    await click("返回账户映射");
+    expect(container.textContent).toContain("需要补齐 · 1 类记账性质 / 2 笔流水");
+    await chooseKind("未知", "支出");
+    await click("上一步");
+    await click("移除文件");
+    const discard = [...document.querySelector('[role="alertdialog"]')!.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("取消本次导入"))!;
+    await act(async () => discard.click());
+    await upload(unknown);
+    expect(container.textContent).toContain("需要补齐 · 1 类记账性质 / 2 笔流水");
+  });
+
+  it("分组补齐保留审核页逐行修改的性质和账户，并保留金额", async () => {
+    // Give the virtualized grid a viewport in happy-dom so its editors mount.
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1200);
+    try {
+      const { ctx, stored } = context(undefined, [account(), account("manual")]);
+      await renderPage(ctx);
+      await upload([
+        csvRow(),
+        csvRow({ id: "manual", direction: "不计收支", amount: "15" }),
+        csvRow({ id: "group", direction: "不计收支", amount: "20" }),
+      ]);
+      await click("保存映射并预览");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择全部行"]')!.click());
+      await click("取消跳过");
+      for (const [column, label] of [["kind", "收入"], ["accountId", "manual"]]) {
+        const cells = container.querySelectorAll<HTMLElement>(`[role="gridcell"][data-column-id="${column}"]`);
+        expect(cells.length).toBeGreaterThanOrEqual(3);
+        await act(async () => cells[1].firstElementChild!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+        await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+          .find((option) => option.textContent?.includes(label))!.click());
+      }
+      await click("返回账户映射");
+      expect(container.textContent).toContain("需要补齐 · 1 类记账性质 / 1 笔流水");
+      await chooseKind("不计收支", "支出");
+      await click("保存映射并预览");
+      await click("提交确认");
+      await click("导入 3 笔");
+      expect(stored[1]).toMatchObject({ activityType: "DEPOSIT", accountId: "manual", amount: "15.00" });
+      expect(stored[2]).toMatchObject({ activityType: "WITHDRAWAL", accountId: "cash", amount: "20.00" });
+    } finally {
+      height.mockRestore();
+      width.mockRestore();
+    }
+  });
+
   it("映射完成仍明确提示人工核对，并说明表格编辑入口", async () => {
     const { ctx } = context(JSON.stringify({ "信用卡&红包": "cash" }));
     await renderPage(ctx);
-    await upload([csvRow({ method: "信用卡&红包" })]);
+    await upload([csvRow({ method: "信用卡&红包", status: "处理中" })]);
     expect(container.textContent).toContain("仍需人工核对");
     expect(container.textContent).toContain("映射完成后仍需核对交易");
     await click("保存映射并预览");
@@ -167,7 +316,7 @@ describe("shared statement wizard", () => {
     )!;
     expect(next.disabled).toBe(true);
     await act(async () =>
-      container.querySelector<HTMLElement>('[aria-label="选择来源 3"]')!.click(),
+      container.querySelector<HTMLElement>('[aria-label="选择性质分组 支付宝 · 未知"]')!.click(),
     );
     const toolbar = container.querySelector('[aria-label="映射批量操作"]')!;
     await act(async () =>
@@ -189,13 +338,13 @@ describe("shared statement wizard", () => {
         button.textContent?.includes("保存映射并预览"),
       )!;
     expect(next().disabled).toBe(false);
-    expect(container.textContent).not.toContain("需要补齐 · 1 笔记账性质");
+    expect(container.textContent).not.toContain("需要补齐 · 1 类记账性质");
     await act(async () =>
       container.querySelector<HTMLElement>('[aria-label="选择付款方式 因公付"]')!.click(),
     );
     await click("取消跳过");
     expect(next().disabled).toBe(true);
-    expect(container.textContent).toContain("需要补齐 · 1 笔记账性质");
+    expect(container.textContent).toContain("需要补齐 · 1 类记账性质 / 1 笔流水");
     expect(container.textContent).toContain("请补齐账户映射");
     expect(saveMany).not.toHaveBeenCalled();
     await click("上一步");
@@ -220,7 +369,7 @@ describe("shared statement wizard", () => {
     );
     expect(container.textContent).toContain("自动识别");
     await click("保存映射并预览");
-    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 余额宝: "yuebao" }));
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_V2_KEY, JSON.stringify({ [scoped("余额宝")]: "yuebao" }));
     await click("提交确认");
     await click("导入 1 笔");
     expect(stored[0]).toMatchObject({
@@ -289,7 +438,7 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("卡尾号一致");
     await renderPage(ctx);
     await click("保存映射并预览");
-    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ [method]: "card" }));
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_V2_KEY, JSON.stringify({ [scoped(method)]: "card" }));
     await click("提交确认");
     await click("导入 1 笔");
     await click("开始新导入");
@@ -454,7 +603,7 @@ describe("shared statement wizard", () => {
     )!;
     await act(async () => option.click());
     await click("保存映射并预览");
-    expect(storage.set).toHaveBeenCalledWith(MAPPING_KEY, JSON.stringify({ 账户余额: "cash" }));
+    expect(storage.set).toHaveBeenCalledWith(MAPPING_V2_KEY, JSON.stringify({ [scoped("账户余额")]: "cash" }));
     expect(container.querySelector('[role="grid"]')).toBeTruthy();
   });
   it("asks before discarding a preview, and dismissal preserves the statement", async () => {
@@ -507,6 +656,48 @@ describe("shared statement wizard", () => {
     expect(container.textContent).not.toContain("导入完成");
     await click("返回预览");
     expect(container.querySelector('[role="grid"]')).toBeTruthy();
+  });
+  it("映射升级持久化后重开可恢复，重置同时清除新旧键", async () => {
+    const { ctx, storage } = context();
+    await renderPage(ctx); await upload(); await click("保存映射并预览");
+    expect(await storage.get(MAPPING_V2_KEY)).toBe(JSON.stringify({ [scoped("账户余额")]: "cash" }));
+    expect(await storage.get(MAPPING_KEY)).toBeNull();
+    await act(async () => root.unmount()); root = createRoot(container);
+    await renderPage(ctx); await upload([csvRow({ id: "new-file" })]);
+    expect(container.textContent).toContain("已保存");
+    await click("重置映射");
+    expect(await storage.get(MAPPING_V2_KEY)).toBeNull();
+    expect(await storage.get(MAPPING_KEY)).toBeNull();
+  });
+  it("映射写入失败不删除旧配置，不进入审核或保存账目", async () => {
+    const { ctx, storage, saveMany } = context();
+    await renderPage(ctx); await upload();
+    storage.set.mockRejectedValueOnce(new Error("storage unavailable"));
+    await click("保存映射并预览");
+    expect(container.textContent).toContain("账户映射保存失败");
+    expect(await storage.get(MAPPING_KEY)).not.toBeNull();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(saveMany).not.toHaveBeenCalled();
+  });
+  it("追加同名文件的相同行号不会继承前一文件的逐行性质", async () => {
+    const { ctx, stored } = context();
+    await renderPage(ctx); await upload([csvRow({ id: "first-file", direction: "未知" })]);
+    await chooseKind("未知", "支出"); await click("上一步");
+    await upload([csvRow({ id: "second-file", direction: "未知" })]);
+    expect(container.textContent).toContain("1 类记账性质 / 1 笔流水");
+    await chooseKind("未知", "收入"); await click("保存映射并预览");
+    await click("提交确认"); await click("导入 2 笔");
+    expect(stored.map((entry) => entry.activityType)).toEqual(["WITHDRAWAL", "DEPOSIT"]);
+  });
+  it("保存映射不将规则结果冻结为保存映射，也不改回推断账户", async () => {
+    const { ctx, storage, stored } = context("{}", [account(), account("manual")]);
+    await storage.set(RULES_KEY, JSON.stringify([{ id: "rule", name: "合成规则", enabled: true, priority: 0, matchMode: "all", conditions: [], accountId: "manual", ignore: false }]));
+    await renderPage(ctx); await upload();
+    expect(container.textContent).toContain("规则匹配");
+    await click("保存映射并预览");
+    expect(await storage.get(MAPPING_V2_KEY)).toBe("{}");
+    await click("提交确认"); await click("导入 1 笔");
+    expect(stored[0].accountId).toBe("manual");
   });
   it("blocks unavailable mappings and supports reset under RTL and dark theme", async () => {
     document.documentElement.dir = "rtl";

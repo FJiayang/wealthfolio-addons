@@ -1,6 +1,6 @@
 {
   "name": "unified-statement-import-addon",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run --exclude '**/package.test.ts'",
     "test:package": "vitest run src/package.test.ts",
+    "test:browser": "node scripts/verify-browser.mjs",
     "bundle": "pnpm build && node scripts/package.mjs"
   },
   "devDependencies": {
@@ -30,6 +31,7 @@
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.3.2",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

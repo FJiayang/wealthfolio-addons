@@ -4,6 +4,7 @@ import type {
   ActivityBulkMutationResult,
 } from "@wealthfolio/addon-sdk";
 import type { StatementRow } from "../parsers/types";
+import type { ImportRule } from "./rules";
 import {
   buildPreview,
   previewSignature,
@@ -35,6 +36,7 @@ export function createSubmitter(host: ImportHost) {
     mappings: Mappings,
     decisions: Decisions,
     reviewed: PreviewRow[],
+    rules: ImportRule[] = [],
   ): Promise<Submission> => {
     if (busy) throw new Error("正在提交，请勿重复操作。");
     busy = true;
@@ -43,7 +45,7 @@ export function createSubmitter(host: ImportHost) {
         host.accounts.getAll(),
         host.activities.getAll(),
       ]);
-      const preview = buildPreview(rows, accounts, activities, mappings, decisions);
+      const preview = buildPreview(rows, accounts, activities, mappings, decisions, rules);
       if (previewSignature(preview) !== previewSignature(reviewed))
         return {
           outcome: "changed",
@@ -51,7 +53,9 @@ export function createSubmitter(host: ImportHost) {
           created: 0,
           message: "已有账目或账户状态发生变化，预览已刷新，请重新确认。",
         };
-      const creates = preview.flatMap((entry) => (entry.create ? [entry.create] : []));
+      const creates = preview.flatMap(
+        (entry) => entry.creates ?? (entry.create ? [entry.create] : []),
+      );
       if (preview.some((entry) => entry.status === "error" || entry.status === "review"))
         return {
           outcome: "changed",
@@ -72,6 +76,7 @@ export function createSubmitter(host: ImportHost) {
           await host.activities.getAll(),
           mappings,
           decisions,
+          rules,
         );
         return {
           outcome: "uncertain",
@@ -87,6 +92,7 @@ export function createSubmitter(host: ImportHost) {
         await host.activities.getAll(),
         mappings,
         decisions,
+        rules,
       );
       if (response.errors.length || response.created.length !== creates.length)
         return {

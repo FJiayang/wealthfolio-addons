@@ -1,8 +1,8 @@
 {
   "id": "unified-statement-import-addon",
   "name": "账单导入",
-  "version": "0.1.3",
-  "description": "本地解析支付宝账单，预览、映射账户并检测重复后保存。",
+  "version": "0.2.0",
+  "description": "本地解析支付平台与银行账单，映射账户、核对来源、拆分手续费并关联真实转账。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
   "sdkVersion": "3.11.0",
@@ -40,7 +40,7 @@
     },
     {
       "category": "activities",
-      "functions": ["getAll", "saveMany"],
+      "functions": ["getAll", "saveMany", "getTransferPair", "linkTransfer"],
       "purpose": "读取来源以检测重复，并保存用户确认的新增记录。"
     }
   ]

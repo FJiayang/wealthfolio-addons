@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getStatementParser, parseStatement, statementParsers } from "./index";
+import { getStatementParser, parseStatementSync as parseStatement, statementParsers } from "./index";
 import { decodeStatement, normalizeAmount, parseCsv, parseShanghaiDate } from "./csv";
 import { csvRow, demoFixture, HEADER } from "../test-fixtures";
 
@@ -11,7 +11,7 @@ describe("支付宝解析", () => {
     const document = parseStatement(new TextEncoder().encode(`${HEADER}\n${csvRow()}`), "fixture.csv");
     expect(document.parserId).toBe("alipay");
     expect(getStatementParser(document.parserId)).toMatchObject({ formats: ["csv"], recordIdLabel: "支付宝订单号" });
-    expect(statementParsers).toHaveLength(1);
+    expect(statementParsers.some((parser) => parser.id === "wechat")).toBe(true);
     expect(() => getStatementParser("missing")).toThrow("未注册");
   });
 
@@ -52,7 +52,31 @@ describe("支付宝解析", () => {
     for (const invalid of ["2025/2/29 12:00", "2025/1/1 25:00", "2025-13-01 12:00", "2025-01-01"])
       expect(() => parseShanghaiDate(invalid)).toThrow();
   });
-  it("关闭交易排除，未知及组合付款待确认，明确退款独立处理", () => {
+  it.each(["交易成功", "支付成功", "代付成功", "解冻成功", "芝麻免押下单成功"])("精确识别成功状态 %s，收支性质独立于支付方式", (status) => {
+    for (const [direction, kind] of [["支出", "expense"], ["收入", "income"]]) {
+      for (const method of ["医保支付", "代付", "信用卡&红包", "因公付", "企业码", "优惠积分立减"]) {
+        const [row] = parse(`${HEADER}\n${csvRow({ status: ` ${status} `, direction, method })}`);
+        expect(row.kind).toBe(kind);
+        expect(row.reviewReason).toBeUndefined();
+      }
+    }
+  });
+  it.each(["处理中", "未知业务成功", "交易成功待确认", "部分支付成功", "", "交易 成功"])("未知状态 %j 保留收支性质并要求状态核对", (status) => {
+    const [row] = parse(`${HEADER}\n${csvRow({ status })}`);
+    expect(row.kind).toBe("expense");
+    expect(row.reviewReason).toBe("交易状态需要确认");
+  });
+  it("退款状态保留原有规则，支出方向冲突仍需核对", () => {
+    for (const direction of ["收入", "不计收支"]) {
+      const [row] = parse(`${HEADER}\n${csvRow({ status: "退款成功", direction })}`);
+      expect(row.kind).toBe("refund");
+      expect(row.reviewReason).toBeUndefined();
+    }
+    const [conflict] = parse(`${HEADER}\n${csvRow({ status: "退款成功" })}`);
+    expect(conflict.kind).toBe("expense");
+    expect(conflict.reviewReason).toBeTruthy();
+  });
+  it("关闭交易排除，组合支付不额外确认，未知性质待补齐，明确退款独立处理", () => {
     const rows = parse(
       [
         HEADER,
@@ -64,7 +88,12 @@ describe("支付宝解析", () => {
       ].join("\n"),
     );
     expect(rows[0].excluded).toBe(true);
-    for (const row of rows.slice(1, 4)) expect(row.reviewReason).toBeTruthy();
+    expect(rows[1].reviewReason).toBeTruthy();
+    expect(rows[1].kind).toBe("expense");
+    expect(rows[2].kind).toBe("expense");
+    expect(rows[2].reviewReason).toBeUndefined();
+    expect(rows[3].kind).toBeUndefined();
+    expect(rows[3].reviewReason).toBeUndefined();
     expect(rows[4].kind).toBe("refund");
     expect(rows[4].reviewReason).toBeUndefined();
     expect(rows[3].defaultExcluded).toBe(true);

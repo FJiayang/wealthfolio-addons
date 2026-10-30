@@ -7,10 +7,8 @@ import {
   ImportResultSummary,
   ImportStatusCards,
   ImportChoice,
-  ImportFilePreview,
   ImportMappingGroup,
   ImportReviewTable,
-  ImportTypeBadge,
 } from "@wealthfolio/import-wizard-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
@@ -23,27 +21,22 @@ import {
   Page,
   PageContent,
   PageHeader,
+  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  useAmountFormatting,
   useNumberFormatting,
-  useDateFormatting,
 } from "@wealthfolio/ui";
 import { getStatementParser, parseStatement, statementParsers } from "../parsers";
 import type { EntryKind, StatementDocument } from "../parsers/types";
-import { resolveAccount } from "../import/account-matching";
+import { mappingKey, resolveAccount } from "../import/account-matching";
 import {
   buildPreview,
   MAPPING_KEY,
+  MAPPING_V2_KEY,
+  rowKey,
   restoreMappings,
   type Decisions,
   type ExistingActivity,
@@ -53,24 +46,17 @@ import {
   type RowDecision,
 } from "../import/ledger";
 import { createSubmitter } from "../import/session";
-import { decodeStatement } from "../parsers/csv";
+import { labels, kinds, statusAppearance } from "./statement-presentation";
+import { StatementMappingDetails } from "./statement-mapping-details";
+import { StatementFilePreview } from "./statement-file-preview";
+import { StatementFeeConfirmation } from "./statement-fee-confirmation";
+import { StatementReconciliation } from "./statement-reconciliation";
+import { useStatementReviewColumns } from "./use-statement-review-columns";
+import { RulesEditor } from "./rules-editor";
+import { TransferPanel } from "./transfer-panel";
+import { RULES_KEY, applyRules, restoreRules, type ImportRule } from "../import/rules";
 type ImportStep = "upload" | "mapping" | "preview" | "confirm" | "result";
 
-const labels: Record<PreviewStatus, string> = {
-  ready: "待导入",
-  duplicate: "重复",
-  excluded: "排除",
-  review: "待确认",
-  error: "错误",
-};
-const statusAppearance = {
-  ready: { tone: "success", variant: "success-subtle", icon: Icons.CheckCircle },
-  duplicate: { tone: "info", variant: "info-subtle", icon: Icons.Copy },
-  excluded: { tone: "muted", variant: "outline", icon: Icons.MinusCircle },
-  review: { tone: "warning", variant: "warning-subtle", icon: Icons.AlertCircle },
-  error: { tone: "error", variant: "destructive-subtle", icon: Icons.XCircle },
-} as const;
-const kinds: Record<EntryKind, string> = { expense: "支出", income: "收入", refund: "支出退款" };
 const accountTypes: Record<Account["accountType"], string> = {
   CASH: "现金",
   CREDIT_CARD: "信用卡",
@@ -119,17 +105,23 @@ function Choice({
 }
 
 export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
-  const { formatAmount } = useAmountFormatting();
   const { formatDecimal } = useNumberFormatting();
-  const { formatDateTime } = useDateFormatting();
   const n = (value: number) => formatDecimal(value, { maximumFractionDigits: 0 });
   const [format, setFormat] = useState("");
-  const [rawText, setRawText] = useState("");
+  const [variantId, setVariantId] = useState("");
+  const [, setRawText] = useState("");
+  const [documents, setDocuments] = useState<StatementDocument[]>([]);
+  const [rules, setRules] = useState<ImportRule[]>([]);
+  const [selectedSheets, setSelectedSheets] = useState<Record<string, string[]>>({});
+  const [sourceAccount, setSourceAccount] = useState("");
+  const fileBytes = useRef(new Map<string, Uint8Array>());
+  const uploadSequence = useRef(0);
+  const [removeId, setRemoveId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("");
   const [accountFilter, setAccountFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedMethods, setSelectedMethods] = useState<string[]>([]);
-  const [selectedMappingRows, setSelectedMappingRows] = useState<number[]>([]);
+  const [selectedMappingRows, setSelectedMappingRows] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [navigationError, setNavigationError] = useState("");
@@ -139,7 +131,17 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activities, setActivities] = useState<ExistingActivity[]>([]);
   const [statement, setStatement] = useState<StatementDocument | null>(null);
-  const rows = useMemo(() => statement?.rows ?? [], [statement]);
+  const rows = useMemo(
+    () =>
+      documents.flatMap((doc) =>
+        doc.rows.filter(
+          (row) =>
+            !selectedSheets[doc.fileId!] ||
+            selectedSheets[doc.fileId!].includes(row.source.sheetName!),
+        ),
+      ),
+    [documents, selectedSheets],
+  );
   const parser = statement ? getStatementParser(statement.parserId) : undefined;
   const [mappings, setMappings] = useState<Mappings>({});
   const [mappingChoices, setMappingChoices] = useState<Mappings>({});
@@ -162,13 +164,19 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       ctx.api.accounts.getAll(),
       ctx.api.activities.getAll(),
       ctx.api.storage.get(MAPPING_KEY),
+      ctx.api.storage.get(MAPPING_V2_KEY),
+      ctx.api.storage.get(RULES_KEY),
     ])
-      .then(([allAccounts, allActivities, saved]) => {
+      .then(([allAccounts, allActivities, saved, savedV2, savedRules]) => {
         if (!active) return;
         setAccounts(allAccounts);
         setActivities(allActivities);
         try {
-          setMappings(restoreMappings(saved, allAccounts));
+          setMappings({
+            ...restoreMappings(saved, allAccounts),
+            ...restoreMappings(savedV2, allAccounts),
+          });
+          setRules(restoreRules(savedRules));
         } catch {
           setError("已保存的账户映射无法读取，请重置映射后重新选择。");
         }
@@ -189,7 +197,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const evaluated = useMemo(() => {
     try {
       return {
-        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions),
+        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions, rules),
         error: "",
       };
     } catch (cause) {
@@ -198,7 +206,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
         error: cause instanceof Error ? cause.message : "来源信息无法读取。",
       };
     }
-  }, [rows, accounts, activities, effectiveMappings, decisions]);
+  }, [rows, accounts, activities, effectiveMappings, decisions, rules]);
   const preview = evaluated.preview;
   const counts = Object.fromEntries(
     Object.keys(labels).map((status) => [
@@ -207,25 +215,86 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     ]),
   );
   const paymentMethods = [
-    ...new Set(rows.filter((row) => !row.excluded).map((row) => row.source.paymentMethod)),
+    ...new Set(rows.filter((row) => !row.excluded).map((row) => mappingKey(row.source))),
   ];
+  const methodSource = (method: string) =>
+    rows.find((row) => mappingKey(row.source) === method)!.source;
+  const methodLabel = (method: string) => {
+    const source = methodSource(method);
+    return source.system === "alipay"
+      ? source.paymentMethod
+      : `${source.paymentMethod || "未提供付款方式"} · ${getStatementParser(source.system).displayName} · ${source.sourceAccount || source.accountHint || "来源账户未提供"}`;
+  };
   const accountResolutions = new Map(
-    paymentMethods.map((method) => [method, resolveAccount(method, accounts, effectiveMappings)]),
+    paymentMethods.map((method) => {
+      const source = methodSource(method);
+      const ruleAccounts = new Set(
+        rows
+          .filter((row) => mappingKey(row.source) === method && !row.error)
+          .map((row) => applyRules(row.source, rules).accountId)
+          .filter(Boolean),
+      );
+      return [
+        method,
+        resolveAccount(
+          source.paymentMethod,
+          accounts,
+          effectiveMappings,
+          source,
+          ruleAccounts.size === 1 ? [...ruleAccounts][0] : undefined,
+        ),
+      ];
+    }),
   );
   const activeMethods = paymentMethods.filter((method) =>
     preview.some(
       (entry) =>
-        entry.row.source.paymentMethod === method &&
+        mappingKey(entry.row.source) === method &&
         entry.status !== "excluded" &&
         entry.status !== "duplicate",
     ),
   );
-  const unresolvedMethods = activeMethods.filter(
-    (method) => !accountResolutions.get(method)?.accountId,
+  const unresolvedMethods = activeMethods.filter((method) =>
+    preview.some(
+      (entry) =>
+        mappingKey(entry.row.source) === method &&
+        entry.status !== "excluded" &&
+        entry.status !== "duplicate" &&
+        !entry.accountId,
+    ),
   );
   const blockedCount = (counts.review ?? 0) + (counts.error ?? 0);
   const unresolvedKinds = preview.filter(
     (entry) => entry.status !== "excluded" && entry.status !== "duplicate" && !entry.kind,
+  );
+  const kindGroups = new Map<string, PreviewRow[]>();
+  for (const entry of unresolvedKinds) {
+    const key = JSON.stringify([entry.row.source.system, entry.row.source.direction]);
+    const group = kindGroups.get(key) ?? [];
+    group.push(entry);
+    kindGroups.set(key, group);
+  }
+  const reviewGroups = new Map<string, PreviewRow[]>();
+  for (const entry of preview) {
+    if (
+      entry.status === "excluded" ||
+      entry.status === "duplicate" ||
+      !entry.row.reviewReason ||
+      decisions[rowKey(entry.row)]?.confirmed
+    )
+      continue;
+    const key = JSON.stringify([
+      entry.row.source.system,
+      entry.row.source.status,
+      entry.row.reviewReason,
+    ]);
+    const group = reviewGroups.get(key) ?? [];
+    group.push(entry);
+    reviewGroups.set(key, group);
+  }
+  const reviewCount = [...reviewGroups.values()].reduce(
+    (count, entries) => count + entries.length,
+    0,
   );
 
   function changeMapping(method: string, accountId: string) {
@@ -234,9 +303,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       Object.fromEntries(
         Object.entries(current).map(([line, decision]) => [
           line,
-          rows.some(
-            (row) => row.source.lineNumber === Number(line) && row.source.paymentMethod === method,
-          )
+          rows.some((row) => rowKey(row) === line && mappingKey(row.source) === method)
             ? { ...decision, confirmed: false }
             : decision,
         ]),
@@ -249,12 +316,12 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       const next = { ...current };
       for (const row of rows)
         if (
-          (selectedMethods.includes(row.source.paymentMethod) ||
-            selectedMappingRows.includes(row.source.lineNumber)) &&
+          (selectedMethods.includes(mappingKey(row.source)) ||
+            selectedMappingRows.includes(rowKey(row))) &&
           !row.excluded
         )
-          next[row.source.lineNumber] = {
-            ...next[row.source.lineNumber],
+          next[rowKey(row)] = {
+            ...next[rowKey(row)],
             excluded,
             confirmed: false,
           };
@@ -264,14 +331,46 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setSelectedMappingRows([]);
   }
 
-  function changeDecision(line: number, patch: RowDecision) {
+  function changeDecision(line: string, patch: RowDecision) {
     if (step === "result") setStep("preview");
     setDecisions((current) => ({
       ...current,
-      [line]: { ...current[line], confirmed: false, ...patch },
+      [line]: {
+        ...current[line],
+        confirmed: false,
+        ...(patch.amount !== undefined || patch.kind !== undefined || patch.accountId !== undefined
+          ? { feeConfirmed: false }
+          : {}),
+        ...patch,
+      },
     }));
     setMessage("");
   }
+
+  function changeGroupKind(entries: PreviewRow[], kind: string) {
+    setDecisions((current) => {
+      const next = { ...current };
+      for (const entry of entries) {
+        const line = rowKey(entry.row);
+        next[line] = {
+          ...current[line],
+          kind: kind ? (kind as EntryKind) : undefined,
+          confirmed: false,
+        };
+      }
+      return next;
+    });
+    setMessage("");
+  }
+
+  const renderDetails = (entries: PreviewRow[], label: string, open = true) => (
+    <StatementMappingDetails
+      entries={entries}
+      label={label}
+      open={open}
+      accounts={accountOptions}
+    />
+  );
 
   async function upload(file: File) {
     setFile(file);
@@ -280,13 +379,20 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setMessage("");
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const parsed = parseStatement(bytes, file.name);
-      if (parsed.parserId !== format || !file.name.toLowerCase().endsWith(".csv"))
-        throw new Error("文件与所选流水格式不符，请选择支付宝流水 CSV。");
-      setRawText(decodeStatement(bytes));
+      const parsed = await parseStatement(bytes, file.name, {
+        channel: format || undefined,
+        variantId: variantId || undefined,
+        sourceAccount,
+        fileId: String(++uploadSequence.current),
+      });
+      fileBytes.current.set(parsed.fileId!, bytes);
+      if (parsed.parserId !== format) throw new Error("文件与所选流水渠道不符，请核对账单格式。");
+      setRawText("");
+      setDocuments((current) => [...current, parsed]);
+      setSourceAccount("");
       setStatement(parsed);
-      setMappingChoices({});
-      setDecisions({});
+      setMappingChoices((current) => current);
+      setDecisions((current) => current);
       setSelectedMethods([]);
       setSelectedMappingRows([]);
       setStep("upload");
@@ -304,10 +410,31 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     try {
       const nextMappings = { ...effectiveMappings };
       for (const [method, resolution] of accountResolutions) {
+        const source = methodSource(method);
+        if (
+          !Object.hasOwn(mappingChoices, method) &&
+          !Object.hasOwn(mappings, method) &&
+          !(source.system === "alipay" && Object.hasOwn(mappings, source.paymentMethod)) &&
+          rows.some(
+            (row) =>
+              mappingKey(row.source) === method &&
+              !row.error &&
+              applyRules(row.source, rules).accountId,
+          )
+        )
+          continue;
         if (resolution.accountId) nextMappings[method] = resolution.accountId;
         else delete nextMappings[method];
       }
-      await ctx.api.storage.set(MAPPING_KEY, JSON.stringify(nextMappings));
+      if (statement?.parserId === "alipay") {
+        for (const method of paymentMethods)
+          delete nextMappings[methodSource(method).paymentMethod];
+      }
+      await ctx.api.storage.set(MAPPING_V2_KEY, JSON.stringify(nextMappings));
+      const legacy = Object.fromEntries(
+        Object.entries(nextMappings).filter(([key]) => !key.startsWith("[")),
+      );
+      if (!Object.keys(legacy).length) await ctx.api.storage.delete(MAPPING_KEY);
       setMappings(nextMappings);
       setMappingChoices(
         Object.fromEntries(
@@ -343,7 +470,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setError("");
     setMessage("");
     try {
-      const result = await submitter(rows, effectiveMappings, decisions, preview);
+      const result = await submitter(rows, effectiveMappings, decisions, preview, rules);
       setSubmission(result);
       setMessage(result.message);
       const [currentAccounts, currentActivities] = await Promise.all([
@@ -353,7 +480,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       setAccounts(currentAccounts);
       setActivities(currentActivities);
       setStep(result.outcome === "changed" || result.outcome === "empty" ? "preview" : "result");
-      if (result.outcome === "success") await viewSpending(true);
+      if (
+        result.outcome === "success" &&
+        !preview.some((entry) => entry.kind === "transferIn" || entry.kind === "transferOut")
+      )
+        await viewSpending(true);
     } catch {
       setError("提交或结果核对失败。请点击“刷新核对”重新读取账目后再提交；请勿直接重复导入。");
       setLoaded(false);
@@ -386,6 +517,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setBusy(true);
     try {
       await ctx.api.storage.delete(MAPPING_KEY);
+      await ctx.api.storage.delete(MAPPING_V2_KEY);
       setMappings({});
       setDecisions((current) =>
         Object.fromEntries(
@@ -406,6 +538,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   }
 
   function cancel() {
+    setDocuments([]);
+    setSelectedSheets({});
+    fileBytes.current.clear();
+    uploadSequence.current = 0;
+    setSourceAccount("");
     setSelectedMappingRows([]);
     setRawText("");
     setSelectedMethods([]);
@@ -441,162 +578,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
             (!accountFilter || entry.accountId === accountFilter) &&
             (!statusFilter || entry.status === statusFilter),
         )
-        .map((entry) => ({ ...entry, line: entry.row.source.lineNumber })),
+        .map((entry) => ({ ...entry, line: entry.row.source.lineNumber, id: rowKey(entry.row) })),
     [preview, typeFilter, accountFilter, statusFilter],
   );
-  const columns = useMemo(
-    () => [
-      {
-        id: "line",
-        accessorKey: "line",
-        header: (): string => "#",
-        size: 90,
-        meta: { readOnly: true, label: "来源行" },
-        cell: ({ row }: { row: { original: PreviewRow & { line: number } } }) => (
-          <span className="flex h-full items-center gap-1" title={row.original.reason}>
-            {n(row.original.line)}
-            {(row.original.status === "review" || row.original.status === "error") && (
-              <Badge variant={statusAppearance[row.original.status].variant} className="px-1">
-                <Icons.AlertCircle
-                  className="size-3"
-                  aria-label={labels[row.original.status]}
-                />
-              </Badge>
-            )}
-          </span>
-        ),
-      },
-      {
-        id: "kind",
-        accessorKey: "kind",
-        header: "记账性质",
-        size: 150,
-        meta: {
-          readOnly: locked,
-          cell: {
-            variant: "select" as const,
-            options: Object.entries(kinds).map(([value, label]) => ({ value, label })),
-            valueRenderer: (value: string) => (
-              <ImportTypeBadge
-                type={
-                  value === "expense" ? "WITHDRAWAL" : value === "income" ? "DEPOSIT" : "CREDIT"
-                }
-              >
-                {kinds[value as EntryKind]}
-              </ImportTypeBadge>
-            ),
-          },
-        },
-      },
-      {
-        id: "amount",
-        accessorKey: "amount",
-        header: "确认金额",
-        size: 150,
-        meta: {
-          readOnly: locked,
-          cell: {
-            variant: "number" as const,
-            valueType: "string" as const,
-            min: 0,
-            valueRenderer: (value: string | number | null) =>
-              formatAmount(value ?? "", "CNY", false),
-          },
-        },
-      },
-      {
-        id: "accountId",
-        accessorKey: "accountId",
-        header: "目标账户",
-        size: 240,
-        meta: { readOnly: locked, cell: { variant: "select" as const, options: accountOptions } },
-      },
-      {
-        id: "processing",
-        header: (): string => "处理状态",
-        size: 320,
-        meta: { readOnly: true, label: "处理状态" },
-        cell: ({ row }: { row: { original: PreviewRow } }) => {
-          const entry = row.original;
-          const appearance = statusAppearance[entry.status];
-          const Icon = appearance.icon;
-          return (
-            <div className="flex h-full min-w-0 items-center gap-2" title={entry.reason}>
-              <Badge
-                className="shrink-0"
-                variant={appearance.variant}
-                data-processing-status={entry.status}
-              >
-                <Icon className="me-1 size-3" />
-                {labels[entry.status]}
-              </Badge>
-              <span className="truncate">{entry.reason}</span>
-            </div>
-          );
-        },
-      },
-      ...(
-        [
-          "date",
-          "merchant",
-          "description",
-          "category",
-          "direction",
-          "paymentMethod",
-          "status",
-          "recordId",
-          "amount",
-        ] as const
-      ).map((key, index) => ({
-        id: "source-" + key,
-        header: (): string | undefined =>
-          [
-            "交易时间",
-            "交易对方",
-            "商品说明",
-            "来源分类",
-            "收/支",
-            "付款方式",
-            "交易状态",
-            "订单号",
-            "原金额",
-          ][index],
-        accessorFn: (entry: PreviewRow) => entry.row.source[key],
-        cell: ({ row }: { row: { original: PreviewRow } }) => {
-          const source = row.original.row.source;
-          const value = source[key];
-          return (
-            <span
-              className="block truncate leading-8"
-              title={key === "date" ? source.originalTime : String(value)}
-            >
-              {key === "date" && value
-                ? formatDateTime(value, { dateStyle: "short", timeStyle: "short" })
-                : key === "amount"
-                  ? formatAmount(value, source.currency, false)
-                  : value}
-            </span>
-          );
-        },
-        size: key === "description" || key === "recordId" ? 220 : 160,
-        meta: {
-          readOnly: true,
-          label: [
-            "交易时间",
-            "交易对方",
-            "商品说明",
-            "来源分类",
-            "收/支",
-            "付款方式",
-            "交易状态",
-            "订单号",
-            "原金额",
-          ][index],
-        },
-      })),
-    ],
-    [locked, accountOptions, formatAmount, formatDateTime],
-  );
+  const columns = useStatementReviewColumns({ locked, accountOptions });
   const steps = [
     { id: "upload", label: "上传" },
     { id: "mapping", label: "映射" },
@@ -697,23 +682,44 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "upload" && (
                 <div className="space-y-4">
+                  <Input
+                    aria-label="来源账户标识"
+                    placeholder="银行账单缺少账号时，填写稳定的来源账户标识；不要使用文件名"
+                    value={sourceAccount}
+                    onChange={(event) => setSourceAccount(event.target.value)}
+                    disabled={busy}
+                  />
                   <ImportChoice
                     label="流水格式"
                     value={format}
-                    disabled={busy || !!file}
+                    disabled={busy}
                     options={statementParsers.map((candidate) => ({
                       value: candidate.id,
-                      label: `${candidate.displayName} CSV`,
+                      label: `${candidate.displayName} ${candidate.formats.map((format) => format.toUpperCase()).join(" / ")}`,
                     }))}
-                    onChange={setFormat}
+                    onChange={(value) => {
+                      setFormat(value);
+                      setVariantId("");
+                    }}
                   />
                   {format && (
                     <>
+                      {(getStatementParser(format).variants?.length ?? 0) > 1 && (
+                        <Choice
+                          label="导出变体（留空自动识别）"
+                          value={variantId}
+                          options={getStatementParser(format).variants!.map((variant) => ({
+                            value: variant.id,
+                            label: variant.label,
+                          }))}
+                          onChange={setVariantId}
+                          disabled={busy}
+                        />
+                      )}
                       <FileDropzone
-                        file={file}
+                        file={null}
                         onFileChange={(nextFile) => {
-                          if (file) setConfirmOpen(true);
-                          else if (nextFile) void upload(nextFile);
+                          if (nextFile) void upload(nextFile);
                         }}
                         isLoading={busy || !loaded}
                         accept={[
@@ -730,33 +736,88 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                           hint: statementParsers.map((candidate) => candidate.fileHint).join(" · "),
                         }}
                       />
-                      {statement && (
-                        <ImportFilePreview
-                          headers={[
-                            "交易时间",
-                            "交易对方",
-                            "商品说明",
-                            "收/支",
-                            "金额",
-                            "付款方式",
-                            "交易状态",
-                            "订单号",
-                          ]}
-                          rows={rows.map(({ source }) => [
-                            source.originalTime,
-                            source.merchant,
-                            source.description,
-                            source.direction,
-                            source.amount,
-                            source.paymentMethod,
-                            source.status,
-                            source.recordId,
-                          ])}
-                          original={
-                            <pre className="text-xs break-all whitespace-pre-wrap">{rawText}</pre>
-                          }
-                        />
-                      )}
+                      {documents.map((doc) => (
+                        <div key={doc.fileId} className="space-y-3 rounded-lg border p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button variant="outline" onClick={() => setStatement(doc)}>
+                              {doc.fileName} · {getStatementParser(doc.parserId).displayName}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() => {
+                                setRemoveId(doc.fileId!);
+                                setConfirmOpen(true);
+                              }}
+                            >
+                              移除文件
+                            </Button>
+                          </div>
+                          {doc.sheets?.map((sheet) => (
+                            <label key={sheet} className="me-4 inline-flex items-center gap-2">
+                              <Checkbox
+                                aria-label={`工作表：${doc.fileName}：${sheet}`}
+                                checked={
+                                  !selectedSheets[doc.fileId!] ||
+                                  selectedSheets[doc.fileId!].includes(sheet)
+                                }
+                                onCheckedChange={(checked) => {
+                                  setSelectedSheets((current) => {
+                                    const previous = current[doc.fileId!] ?? doc.sheets!;
+                                    return {
+                                      ...current,
+                                      [doc.fileId!]: checked
+                                        ? [...previous, sheet]
+                                        : previous.filter((name) => name !== sheet),
+                                    };
+                                  });
+                                }}
+                              />
+                              {sheet}
+                            </label>
+                          ))}
+                          {doc.warnings?.map((warning) => (
+                            <AlertFeedback key={warning} variant="warning" title="源文件核对">
+                              {warning}
+                            </AlertFeedback>
+                          ))}
+                          {doc.rows.some((row) => row.identityReason?.includes("来源账户")) && (
+                            <div className="space-y-2">
+                              <p>
+                                填写上方稳定来源账户标识后重新解析此文件；目标账户选择不影响来源身份。
+                              </p>
+                              <Button
+                                disabled={busy || !sourceAccount.trim()}
+                                onClick={async () => {
+                                  setBusy(true);
+                                  try {
+                                    const updated = await parseStatement(
+                                      fileBytes.current.get(doc.fileId!)!,
+                                      doc.fileName!,
+                                      { channel: doc.parserId, fileId: doc.fileId, sourceAccount },
+                                    );
+                                    setDocuments((current) =>
+                                      current.map((item) =>
+                                        item.fileId === doc.fileId ? updated : item,
+                                      ),
+                                    );
+                                    setStatement(updated);
+                                  } catch (error) {
+                                    setError(
+                                      error instanceof Error ? error.message : "重新解析失败",
+                                    );
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                }}
+                              >
+                                补全来源账户并重新解析
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {statement && <StatementFilePreview document={statement} />}
                     </>
                   )}
                   <p className="text-muted-foreground text-sm">
@@ -766,6 +827,24 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
+                  <RulesEditor
+                    rules={rules}
+                    rows={rows}
+                    accounts={accountOptions}
+                    disabled={busy}
+                    onSave={async (next) => {
+                      await ctx.api.storage.set(RULES_KEY, JSON.stringify(next));
+                      setRules(next);
+                      setDecisions((current) =>
+                        Object.fromEntries(
+                          Object.entries(current).map(([key, decision]) => [
+                            key,
+                            { ...decision, confirmed: false },
+                          ]),
+                        ),
+                      );
+                    }}
+                  />
                   {parser && (
                     <AlertFeedback
                       variant="warning"
@@ -795,15 +874,15 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       },
                       {
                         label: "仍需人工核对",
-                        value: n(preview.filter((entry) => entry.status === "review" && entry.row.reviewReason).length),
-                        tone: counts.review ? "warning" : "success",
+                        value: n(reviewCount),
+                        tone: reviewGroups.size ? "warning" : "success",
                         icon: <Icons.AlertCircle className="size-4" />,
                       },
                     ]}
                   />
-                  {preview.some((entry) => entry.status === "review" && entry.row.reviewReason) && (
+                  {reviewGroups.size > 0 && (
                     <AlertFeedback variant="warning" title="映射完成后仍需核对交易">
-                      账户和记账性质已填写，不代表组合支付等疑点已核实。下一步请核对实际扣款金额、性质和账户；可在审核表格中双击单元格修改，再选择记录并点击顶部“标记已核对”。
+                      以下异常交易状态需要核实是否已完成。补齐映射后，可在下一步审核表格中双击单元格修改，再选择记录并点击顶部“标记已核对”。
                     </AlertFeedback>
                   )}
                   {unresolvedMethods.length > 0 && (
@@ -837,43 +916,61 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   {unresolvedKinds.length > 0 && (
                     <ImportMappingGroup
                       pending
-                      title={`需要补齐 · ${n(unresolvedKinds.length)} 笔记账性质`}
+                      title={`需要补齐 · ${n(kindGroups.size)} 类记账性质 / ${n(unresolvedKinds.length)} 笔流水`}
                     >
-                      {unresolvedKinds.map((entry) => (
-                        <div
-                          key={entry.row.source.lineNumber}
-                          className="flex flex-wrap items-center gap-3"
-                        >
-                          <Checkbox
-                            aria-label={`选择来源 ${entry.row.source.lineNumber}`}
-                            checked={selectedMappingRows.includes(entry.row.source.lineNumber)}
-                            onCheckedChange={(checked) =>
-                              setSelectedMappingRows((current) =>
-                                checked
-                                  ? [...current, entry.row.source.lineNumber]
-                                  : current.filter((line) => line !== entry.row.source.lineNumber),
-                              )
-                            }
-                          />
-                          <span>
-                            #{n(entry.row.source.lineNumber)} · {entry.row.source.description} ·{" "}
-                            {entry.row.source.direction}
-                          </span>
-                          <Choice
-                            label={`第 ${n(entry.row.source.lineNumber)} 行性质`}
-                            value={entry.kind ?? ""}
-                            options={Object.entries(kinds).map(([value, label]) => ({
-                              value,
-                              label,
-                            }))}
-                            onChange={(kind) =>
-                              changeDecision(entry.row.source.lineNumber, {
-                                kind: kind ? (kind as EntryKind) : undefined,
-                              })
-                            }
-                          />
-                        </div>
-                      ))}
+                      {[...kindGroups].map(([key, entries]) => {
+                        const source = entries[0].row.source;
+                        const label = `${getStatementParser(source.system).displayName} · ${source.direction || "未提供收支"}`;
+                        const lines = entries.map((entry) => rowKey(entry.row));
+                        return (
+                          <div key={key} className="grid items-start gap-3 sm:grid-cols-2">
+                            <span>
+                              <Checkbox
+                                aria-label={`选择性质分组 ${label}`}
+                                checked={lines.every((line) => selectedMappingRows.includes(line))}
+                                onCheckedChange={(checked) =>
+                                  setSelectedMappingRows((current) =>
+                                    checked
+                                      ? [...new Set([...current, ...lines])]
+                                      : current.filter((line) => !lines.includes(line)),
+                                  )
+                                }
+                              />{" "}
+                              {label} · {n(entries.length)} 笔
+                            </span>
+                            <Choice
+                              label={`性质映射：${label}`}
+                              value=""
+                              disabled={busy}
+                              options={Object.entries(kinds).map(([value, label]) => ({
+                                value,
+                                label,
+                              }))}
+                              onChange={(kind) => changeGroupKind(entries, kind)}
+                            />
+                            {renderDetails(entries, `性质：${label}`)}
+                          </div>
+                        );
+                      })}
+                    </ImportMappingGroup>
+                  )}
+                  {reviewGroups.size > 0 && (
+                    <ImportMappingGroup
+                      pending
+                      title={`异常状态待核对 · ${n(reviewGroups.size)} 类 / ${n(reviewCount)} 笔流水`}
+                    >
+                      {[...reviewGroups].map(([key, entries]) => {
+                        const source = entries[0].row.source;
+                        const label = `${getStatementParser(source.system).displayName} · ${source.status || "未提供交易状态"}`;
+                        return (
+                          <div key={key} className="space-y-2">
+                            <p>
+                              {label} · {n(entries.length)} 笔 · {entries[0].row.reviewReason}
+                            </p>
+                            {renderDetails(entries, `异常状态：${label}`)}
+                          </div>
+                        );
+                      })}
                     </ImportMappingGroup>
                   )}
                   {(unresolvedMethods.length ? [true, false] : [false]).map((pending) => (
@@ -905,12 +1002,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                               ? "人工选择"
                               : resolution.origin === "saved"
                                 ? "已保存"
-                                : "自动识别";
+                                : resolution.origin === "rule"
+                                  ? "规则匹配"
+                                  : "自动识别";
                           return (
                             <div key={method} className="grid items-start gap-3 sm:grid-cols-2">
                               <span>
                                 <Checkbox
-                                  aria-label={`选择付款方式 ${method}`}
+                                  aria-label={`选择付款方式 ${methodLabel(method)}`}
                                   checked={selectedMethods.includes(method)}
                                   onCheckedChange={(checked) =>
                                     setSelectedMethods((current) =>
@@ -920,11 +1019,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                                     )
                                   }
                                 />{" "}
-                                {method || "未提供付款方式（请指定收款账户）"}{" "}
+                                {methodLabel(method)}{" "}
                                 <span className="text-muted-foreground">
                                   {n(
-                                    rows.filter((row) => row.source.paymentMethod === method)
-                                      .length,
+                                    rows.filter((row) => mappingKey(row.source) === method).length,
                                   )}{" "}
                                   笔
                                 </span>{" "}
@@ -932,7 +1030,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                               </span>
                               <div className="space-y-2">
                                 <Choice
-                                  label={`账户映射：${method}`}
+                                  label={`账户映射：${methodLabel(method)}`}
                                   value={resolution.accountId}
                                   options={options}
                                   disabled={busy}
@@ -963,77 +1061,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                                   </ul>
                                 )}
                               </div>
-                              <details open={pending} className="min-w-0 sm:col-span-2">
-                                <summary className="cursor-pointer text-sm font-medium">
-                                  关联流水明细
-                                </summary>
-                                <div className="mt-3 max-h-80 overflow-auto rounded-lg border">
-                                  <Table
-                                    aria-label={`流水明细：${method || "未提供付款方式"}`}
-                                    containerClassName="overflow-visible"
-                                    className="min-w-max"
-                                  >
-                                    <TableHeader className="bg-card sticky top-0 z-10">
-                                      <TableRow>
-                                        {["来源行", "交易时间", "记账性质", "交易对方", "商品说明", "金额", "处理状态"].map((heading) => (
-                                          <TableHead
-                                            key={heading}
-                                            className={heading === "金额" ? "text-end" : "text-start"}
-                                          >
-                                            {heading}
-                                          </TableHead>
-                                        ))}
-                                      </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                      {preview
-                                        .filter((entry) => entry.row.source.paymentMethod === method)
-                                        .map((entry) => {
-                                        const source = entry.row.source;
-                                        const appearance = statusAppearance[entry.status];
-                                        const StatusIcon = appearance.icon;
-                                        return (
-                                          <TableRow key={source.lineNumber}>
-                                            <TableCell>{n(source.lineNumber)}</TableCell>
-                                            <TableCell className="whitespace-nowrap">
-                                              {source.date
-                                                ? formatDateTime(source.date, { dateStyle: "short", timeStyle: "short" })
-                                                : source.originalTime}
-                                            </TableCell>
-                                            <TableCell>
-                                              {entry.kind ? (
-                                                <ImportTypeBadge
-                                                  type={entry.kind === "expense" ? "WITHDRAWAL" : entry.kind === "income" ? "DEPOSIT" : "CREDIT"}
-                                                >
-                                                  {kinds[entry.kind]}
-                                                </ImportTypeBadge>
-                                              ) : source.direction}
-                                            </TableCell>
-                                            <TableCell className="max-w-64 whitespace-normal break-words">
-                                              {source.merchant}
-                                            </TableCell>
-                                            <TableCell className="max-w-80 whitespace-normal break-words">
-                                              {source.description}
-                                            </TableCell>
-                                            <TableCell className="text-end whitespace-nowrap tabular-nums">
-                                              {entry.row.error ? entry.amount : formatAmount(entry.amount, source.currency, false)} {source.currency}
-                                            </TableCell>
-                                            <TableCell>
-                                              <Badge variant={appearance.variant}>
-                                                <StatusIcon className="me-1 size-3" />
-                                                {labels[entry.status]}
-                                              </Badge>
-                                              <span className="text-muted-foreground ms-2 text-xs">
-                                                {entry.reason}
-                                              </span>
-                                            </TableCell>
-                                          </TableRow>
-                                        );
-                                      })}
-                                    </TableBody>
-                                  </Table>
-                                </div>
-                              </details>
+                              {renderDetails(
+                                preview.filter((entry) => mappingKey(entry.row.source) === method),
+                                methodLabel(method) || "未提供付款方式",
+                                pending,
+                              )}
                             </div>
                           );
                         })}
@@ -1041,10 +1073,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   ))}
                   <details className="rounded-lg border p-3">
                     <summary>固定字段映射</summary>
-                    <p className="mt-2 text-sm">
-                      交易时间 → 日期；收/支 → 记账性质；金额 → 金额；收/付款方式 → 账户；交易订单号
-                      → 来源标识。来源分类保留在备注中。
-                    </p>
+                    <p className="mt-2 text-sm">{parser?.fieldMappingHint}</p>
                   </details>
                   <Button variant="outline" disabled={busy} onClick={() => void resetMappings()}>
                     {"重置映射"}
@@ -1053,13 +1082,34 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {(step === "preview" || step === "confirm") && (
                 <div className="space-y-4">
+                  {preview
+                    .filter(
+                      (entry) =>
+                        entry.row.source.fee &&
+                        entry.row.source.fee !== "0.00" &&
+                        entry.status !== "duplicate",
+                    )
+                    .map((entry) => (
+                      <StatementFeeConfirmation
+                        key={rowKey(entry.row)}
+                        entry={entry}
+                        decision={decisions[rowKey(entry.row)] ?? {}}
+                        accounts={accountOptions}
+                        busy={busy}
+                        onChange={changeDecision}
+                      />
+                    ))}
                   <ImportStatusCards items={statistics} />
                   <AlertFeedback
                     variant={blockedCount ? "warning" : "success"}
-                    title={blockedCount ? `还有 ${n(blockedCount)} 笔记录需要处理` : `所有 ${n(counts.ready)} 笔记录已就绪`}
+                    title={
+                      blockedCount
+                        ? `还有 ${n(blockedCount)} 笔记录需要处理`
+                        : `所有 ${n(counts.ready)} 笔记录已就绪`
+                    }
                   >
                     {blockedCount
-                      ? "黄色单元格需要核实，红色单元格需要修正。双击“记账性质”“确认金额”或“目标账户”即可编辑，也可选中单元格后按 F2 或 Enter。核实实际扣款金额、性质和账户后，勾选行首复选框，在顶部点击“标记已核对”。转账、还款、理财请跳过；错误不能通过核对放行。"
+                      ? "黄色单元格需要核实，红色单元格需要修正。双击“记账性质”“确认金额”或“目标账户”即可编辑，也可选中单元格后按 F2 或 Enter。核实实际扣款金额、性质和账户后，勾选行首复选框，在顶部点击“标记已核对”。现金转账须确认方向和账户，基金证券交易请使用投资插件；格式错误不能通过核对放行。"
                       : "您的数据已准备好导入，仍可审核并调整。已跳过及重复记录不会提交。"}
                   </AlertFeedback>
                   {step === "preview" && (
@@ -1067,35 +1117,55 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       key={file?.name}
                       data={gridRows}
                       columns={columns}
-                      getRowId={(entry) => String(entry.line)}
+                      getRowId={(entry) =>
+                        `${entry.row.source.fileName} · ${entry.row.source.sheetName ?? "CSV"} · 第 ${n(entry.line)} 行 · 文件 ${n(Number(JSON.parse(entry.id)[0]))}`
+                      }
                       busy={busy}
                       getCellState={(rowIndex, columnId) => {
                         const entry = gridRows[rowIndex];
-                        if (!entry || !["kind", "amount", "accountId"].includes(columnId)) return null;
+                        if (!entry || !["kind", "amount", "accountId"].includes(columnId))
+                          return null;
                         if (entry.status === "error")
                           return { type: "error", messages: [entry.reason] };
                         if (entry.status === "review")
-                          return { type: "warning", messages: [entry.reason, "双击编辑，或选中后按 F2 / Enter；核实后选择行并标记已核对"] };
+                          return {
+                            type: "warning",
+                            messages: [
+                              entry.reason,
+                              "双击编辑，或选中后按 F2 / Enter；核实后选择行并标记已核对",
+                            ],
+                          };
                         return null;
                       }}
                       canSelect={(entry) => !entry.row.excluded && entry.status !== "duplicate"}
                       onSkip={(entries) =>
-                        entries.forEach((entry) => changeDecision(entry.line, { excluded: true }))
+                        entries.forEach((entry) => changeDecision(entry.id, { excluded: true }))
                       }
                       onRestore={(entries) =>
-                        entries.forEach((entry) => changeDecision(entry.line, { excluded: false }))
+                        entries.forEach((entry) => changeDecision(entry.id, { excluded: false }))
                       }
                       canReview={(entry) =>
                         entry.status === "review" &&
-                        Boolean(entry.row.reviewReason) &&
-                        buildPreview(rows, accounts, activities, effectiveMappings, {
-                          ...decisions,
-                          [entry.line]: { ...decisions[entry.line], confirmed: true },
-                        }).find((candidate) => candidate.row.source.lineNumber === entry.line)
-                          ?.status === "ready"
+                        Boolean(
+                          entry.row.reviewReason ||
+                          entry.kind === "transferIn" ||
+                          entry.kind === "transferOut",
+                        ) &&
+                        buildPreview(
+                          rows,
+                          accounts,
+                          activities,
+                          effectiveMappings,
+                          {
+                            ...decisions,
+                            [entry.id]: { ...decisions[entry.id], confirmed: true },
+                          },
+                          rules,
+                        ).find((candidate) => rowKey(candidate.row) === entry.id)?.status ===
+                          "ready"
                       }
                       onReview={(entries) =>
-                        entries.forEach((entry) => changeDecision(entry.line, { confirmed: true }))
+                        entries.forEach((entry) => changeDecision(entry.id, { confirmed: true }))
                       }
                       filters={
                         <>
@@ -1128,7 +1198,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       onDataChange={(next) => {
                         for (const entry of next) {
                           const before = preview.find(
-                            (candidate) => candidate.row.source.lineNumber === entry.line,
+                            (candidate) => rowKey(candidate.row) === entry.id,
                           );
                           if (
                             before &&
@@ -1137,7 +1207,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                               entry.kind !== before.kind ||
                               entry.accountId !== before.accountId)
                           )
-                            changeDecision(entry.line, {
+                            changeDecision(entry.id, {
                               amount: entry.amount,
                               kind: entry.kind,
                               accountId: entry.accountId,
@@ -1172,7 +1242,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 <ImportResultSummary
                   title={
                     submission.outcome === "success"
-                      ? "导入完成"
+                      ? preview.some((entry) => entry.kind === "transferIn" || entry.kind === "transferOut") ? "活动已保存，转账请核对配对状态" : "导入完成"
                       : submission.outcome === "partial"
                         ? "部分完成"
                         : "结果待核对"
@@ -1186,10 +1256,16 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   }
                   description={submission.message}
                   statistics={[
-                    { label: "本次确认新增", value: n(submission.created) },
+                    { label: "本次确认新增活动", value: n(submission.created) },
+                    { label: "本次来源行数", value: n(rows.length) },
                     {
-                      label: submission.outcome === "uncertain" ? "待确认" : "未提交",
-                      value: n(submission.unconfirmed ?? rows.length - submission.created),
+                      label: submission.outcome === "uncertain" ? "待确认活动" : "仍待处理来源行",
+                      value: n(
+                        submission.unconfirmed ??
+                          preview.filter((entry) =>
+                            ["ready", "review", "error"].includes(entry.status),
+                          ).length,
+                      ),
                     },
                   ]}
                 >
@@ -1208,17 +1284,36 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   <Button onClick={cancel}>{"开始新导入"}</Button>
                 </ImportResultSummary>
               )}
+              <StatementReconciliation documents={documents} preview={preview} />
               <p className="text-muted-foreground mt-3 text-xs">
                 {"重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。"}
               </p>
+              <TransferPanel
+                ctx={ctx}
+                activities={activities}
+                accounts={accountOptions}
+                disabled={busy}
+                onRefresh={refresh}
+              />
             </ImportWizardLayout>
           </div>
         </PageContent>
         <CancelConfirmationDialog
           open={confirmOpen}
-          onOpenChange={setConfirmOpen}
-          onConfirm={cancel}
-          title={"放弃本次导入？"}
+          onOpenChange={(open) => {
+            setConfirmOpen(open);
+            if (!open) setRemoveId(null);
+          }}
+          onConfirm={() => {
+            if (removeId) {
+              setDocuments((current) => current.filter((doc) => doc.fileId !== removeId));
+              if (statement?.fileId === removeId) setStatement(null);
+              fileBytes.current.delete(removeId);
+              setRemoveId(null);
+              setConfirmOpen(false);
+            } else cancel();
+          }}
+          title={removeId ? "移除此文件？" : "放弃本次导入？"}
           description={"将清除已上传账单和未提交的修改。"}
           continueLabel={"继续编辑"}
           cancelLabel={"取消本次导入"}

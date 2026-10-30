@@ -5,6 +5,7 @@ import { zipSync } from "fflate";
 const root = new URL("../", import.meta.url);
 const manifest = JSON.parse(await readFile(new URL("manifest.json", root), "utf8"));
 const entries = {};
+entries["licenses/sheetjs-LICENSE.txt"] = new Uint8Array(await readFile(new URL("node_modules/xlsx/LICENSE", root)));
 for (const name of ["manifest.json", "README.md", "LICENSE"])
   entries[name] = new Uint8Array(await readFile(new URL(name, root)));
 async function collect(directory) {

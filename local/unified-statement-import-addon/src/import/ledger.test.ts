@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { parseStatement } from "../parsers";
+import { parseStatementSync as parseStatement } from "../parsers";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { buildPreview, METADATA_KEY, restoreMappings } from "./ledger";
 
@@ -36,7 +36,7 @@ describe("预览、来源和重复检测", () => {
     expect(neutral.every((entry) => entry.status === "excluded" && !entry.create)).toBe(true);
     expect(preview.filter((entry) => entry.reason === "不计收支，默认跳过个人记账")).toHaveLength(20);
   });
-  it("不计收支默认跳过，恢复后必须补齐并核对，交易关闭不能恢复", () => {
+  it("不计收支默认跳过，恢复后必须补齐，交易关闭不能恢复", () => {
     const parsed = rows(csvRow({ direction: "不计收支", method: "因公付" }));
     expect(buildPreview(parsed, [], [], {}, {})[0]).toMatchObject({
       status: "excluded",
@@ -48,8 +48,7 @@ describe("预览、来源和重复检测", () => {
     );
     const restored = { excluded: false, kind: "expense" as const, accountId: "cash" };
     expect(buildPreview(parsed, [cash], [], {}, { 2: restored })[0]).toMatchObject({
-      status: "review",
-      create: undefined,
+      status: "ready",
     });
     expect(
       buildPreview(
@@ -118,11 +117,18 @@ describe("预览、来源和重复检测", () => {
     expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe(
       "review",
     );
-    for (const overrides of [{ status: "处理中" }, { method: `${method}&红包` }]) {
-      expect(
-        buildPreview(rows(csvRow({ method, ...overrides })), accounts, [], {}, {})[0].status,
-      ).toBe("review");
-    }
+    expect(buildPreview(rows(csvRow({ method, status: "处理中" })), accounts, [], {}, {})[0])
+      .toMatchObject({ status: "review", kind: "expense", reason: "交易状态需要确认" });
+    expect(buildPreview(rows(csvRow({ method: `${method}&红包` })), accounts, [], { [`${method}&红包`]: "card" }, {})[0].status)
+      .toBe("ready");
+  });
+
+  it("异常状态需要明确核对，确认后逐笔创建且保留来源状态", () => {
+    const parsed = rows(csvRow({ status: "未知业务成功" }));
+    expect(buildPreview(parsed, [cash], [], mapping, {})[0])
+      .toMatchObject({ status: "review", kind: "expense", create: undefined });
+    expect(buildPreview(parsed, [cash], [], mapping, { 2: { confirmed: true } })[0])
+      .toMatchObject({ status: "ready", create: { metadata: { [METADATA_KEY]: { sources: [expect.objectContaining({ status: "未知业务成功" })] } } } });
   });
 
   it("创建备注及完整来源，精度和原始金额不受人工确认影响", () => {

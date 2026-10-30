@@ -4,7 +4,7 @@ import type {
   ActivityBulkMutationResult,
 } from "@wealthfolio/addon-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { parseStatement } from "../parsers";
+import { parseStatementSync as parseStatement } from "../parsers";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { buildPreview } from "./ledger";
 import { createSubmitter } from "./session";

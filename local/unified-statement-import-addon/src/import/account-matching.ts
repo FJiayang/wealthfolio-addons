@@ -1,5 +1,6 @@
 import type { Account } from "@wealthfolio/addon-sdk";
 import { normalizeBankName } from "./bank-aliases";
+import type { StatementSource } from "../parsers/types";
 
 export type Mappings = Record<string, string>;
 export interface AccountCandidate {
@@ -106,14 +107,34 @@ export function inferAccount(
   return { candidates, accountId: high.length === 1 ? high[0].accountId : undefined };
 }
 
-export function resolveAccount(paymentMethod: string, accounts: Account[], mappings: Mappings) {
+export function mappingKey(
+  source: Pick<StatementSource, "system" | "sourceAccount" | "accountHint" | "paymentMethod">,
+): string {
+  return JSON.stringify([
+    source.system,
+    source.sourceAccount || source.accountHint,
+    normalizeInstrument(source.paymentMethod),
+  ]);
+}
+
+export function resolveAccount(
+  paymentMethod: string,
+  accounts: Account[],
+  mappings: Mappings,
+  source?: StatementSource,
+  ruleAccountId?: string,
+) {
   const inference = inferAccount(paymentMethod, accounts);
-  const mapped = Object.hasOwn(mappings, paymentMethod);
-  const accountId = mapped ? mappings[paymentMethod] : (inference.accountId ?? "");
+  const key = source ? mappingKey(source) : paymentMethod;
+  const legacy = source?.system === "alipay" && Object.hasOwn(mappings, paymentMethod);
+  const mapped = Object.hasOwn(mappings, key) || legacy;
+  const accountId = mapped
+    ? mappings[Object.hasOwn(mappings, key) ? key : paymentMethod]
+    : (ruleAccountId ?? inference.accountId ?? "");
   const available = accounts.some((account) => account.id === accountId);
   return {
     candidates: inference.candidates,
     accountId: available ? accountId : "",
-    origin: available ? (mapped ? "saved" : "inferred") : "pending",
+    origin: available ? (mapped ? "saved" : ruleAccountId ? "rule" : "inferred") : "pending",
   } as const;
 }

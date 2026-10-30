@@ -6,7 +6,7 @@ import type {
   ActivityDetails,
 } from "@wealthfolio/addon-sdk";
 import { expect, it } from "vitest";
-import { parseStatement } from "../parsers";
+import { parseStatementSync as parseStatement } from "../parsers";
 import { normalizeAmount } from "../parsers/csv";
 import { buildPreview } from "./ledger";
 import { createSubmitter } from "./session";

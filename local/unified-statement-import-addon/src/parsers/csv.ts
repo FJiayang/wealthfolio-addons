@@ -10,6 +10,8 @@ export class CsvParseError extends Error {
 }
 
 export function decodeStatement(bytes: Uint8Array): string {
+  if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff))
+    return new TextDecoder(bytes[0] === 0xff ? "utf-16le" : "utf-16be", { fatal: true }).decode(bytes);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
@@ -21,7 +23,7 @@ export function decodeStatement(bytes: Uint8Array): string {
   }
 }
 
-export function parseCsv(text: string): CsvRecord[] {
+export function parseCsv(text: string, delimiter = ","): CsvRecord[] {
   const records: CsvRecord[] = [];
   let cells: string[] = [];
   let cell = "";
@@ -55,7 +57,7 @@ export function parseCsv(text: string): CsvRecord[] {
         cell += char;
         if (char === "\n" || (char === "\r" && text[i + 1] !== "\n")) line++;
       }
-    } else if (char === ",") finishCell();
+    } else if (char === delimiter) finishCell();
     else if (char === "\n" || char === "\r") {
       if (char === "\r" && text[i + 1] === "\n") i++;
       finishRow();
