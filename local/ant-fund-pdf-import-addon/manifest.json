@@ -1,7 +1,7 @@
 {
   "id": "ant-fund-pdf-import-addon",
   "name": "蚂蚁基金 PDF 导入",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "本地解析蚂蚁基金交易明细，核对后交由 Wealthfolio 审核并导入。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",

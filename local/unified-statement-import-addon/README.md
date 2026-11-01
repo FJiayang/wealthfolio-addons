@@ -36,7 +36,7 @@ pnpm --filter unified-statement-import-addon test:package
 隔离浏览器与真实保存验收：先在链接的宿主仓库生成 web 构建和 `target/debug/wealthfolio-server`，再运行 `pnpm --filter unified-statement-import-addon test:browser`。复用宿主已有 Playwright，自动创建临时数据目录与临时端口，只写合成账户与流水，不修改宿主源码或 `.env.web`。覆盖桌面／手机、LTR／RTL、主题、两渠道真实保存、重复导入、手续费保存与转账 UI关联；截图保留在命令输出的临时目录。
 
 在 Wealthfolio 插件设置中选择“从文件安装”，安装
-`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.2.0.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
+`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.2.1.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
 
 ## 使用
 

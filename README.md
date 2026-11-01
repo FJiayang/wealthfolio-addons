@@ -24,6 +24,28 @@ scripts/                     Validation, schema tests, release, README helpers
 docs/                        Repository migration and maintainer notes
 ```
 
+## 本地插件测试与发布
+
+`local/` 插件通过 GitHub Release ZIP 手动安装，`official/` 由上游打包。本仓库 CI 仍检查 official 的类型和测试，但不构建其 ZIP。
+
+修改 local 插件时，在同一个 PR 中同步升级 `manifest.json`、`package.json` 的 `major.minor.patch` 版本，并在该插件 `CHANGELOG.md` 顶部添加 `## [版本] - YYYY-MM-DD` 和中文更新说明。修改共享 `packages/import-wizard-ui/`、根依赖锁文件或公共 TypeScript 配置时，全部 local 插件都要升版。仅修改工作流、仓库说明或 official 不触发 local 发布。
+
+CI 在同级检出 `FJiayang/wealthfolio` 的 `main`，按两仓库锁文件安装依赖，先构建宿主 SDK 和 UI。宿主主干变化可能影响同一个 PR 的重跑结果，每次运行及 Release 都记录实际宿主提交。本地验证需准备相同的同级宿主结构与依赖：
+
+```sh
+pnpm test:release
+pnpm validate:local-release origin/main dist/local-release-plan.json
+pnpm check
+pnpm bundle:local
+pnpm test:package:local
+```
+
+PR 的 `Addon checks` 覆盖元数据、official 检查、共享 UI 和两个 local 插件的类型与单元测试、版本说明和 ZIP 内容验证。构建产物位于该运行的 `local-addon-packages` artifact。
+
+合并 `main` 后重新检查，仅为新版本创建 `<插件ID>/v<版本>` Release。附件 `<插件ID>-<版本>.zip` 直接来自该次验证产物；从 Releases 下载后在 Wealthfolio 插件设置中选择“从文件安装”。CI 不自动升版、不发布商店，也不修改宿主数据。
+
+发布先创建 draft、上传 ZIP，再公开。失败时修复原因后重跑失败 job；同一提交的 draft 可以恢复，已公开版本不会覆盖。主干须开启 PR 合并和 `Addon checks` 必需检查，不能跳过失败检查合并。
+
 ## Trust Model
 
 There are two channels, and no tier in between.

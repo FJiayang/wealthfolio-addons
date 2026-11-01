@@ -3,62 +3,108 @@ name: Validate
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  addon-metadata:
+  checks:
+    name: Addon checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      releases: ${{ steps.versions.outputs.releases }}
+    defaults:
+      run:
+        working-directory: wealthfolio-addons
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: wealthfolio-addons
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: FJiayang/wealthfolio
+          ref: main
+          path: wealthfolio
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:schema
-      - run: pnpm test:derive
-      - run: pnpm validate:addons
-      - run: pnpm generate
-      - run: git diff --exit-code
-
-  official-addons:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter swingfolio-addon test
-      - run: pnpm type-check:official
-      - run: pnpm bundle:official
-
-  ant-fund-pdf-import:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.4
+          package_json_file: wealthfolio-addons/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
+          cache-dependency-path: |
+            wealthfolio/pnpm-lock.yaml
+            wealthfolio-addons/pnpm-lock.yaml
+      - name: Prepare host SDK, UI and React
+        working-directory: wealthfolio
+        run: |
+          echo "HOST_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          pnpm install --frozen-lockfile
+          pnpm --filter @wealthfolio/addon-sdk --filter @wealthfolio/ui build
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter ant-fund-pdf-import-addon type-check
-      - run: pnpm --filter ant-fund-pdf-import-addon test
-      - run: pnpm --filter ant-fund-pdf-import-addon bundle
-      - run: pnpm --filter ant-fund-pdf-import-addon test:package
+      - name: Test release validation
+        run: pnpm test:release
+      - name: Validate versions and prepare release notes
+        id: versions
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base=$(git merge-base "$PR_BASE" HEAD)
+          else
+            base="$PUSH_BASE"
+          fi
+          pnpm validate:local-release "$base" dist/local-release-plan.json
+      - name: Metadata, official and local checks
+        run: pnpm check
+      - name: Check generated metadata
+        run: |
+          pnpm generate
+          git diff --exit-code
+      - name: Build and verify local installable archives
+        run: |
+          pnpm bundle:local
+          pnpm test:package:local
       - uses: actions/upload-artifact@v4
         with:
-          name: ant-fund-pdf-import-addon
-          path: local/ant-fund-pdf-import-addon/dist/*.zip
+          name: local-addon-packages
+          overwrite: true
+          path: |
+            wealthfolio-addons/local/*/dist/*.zip
+            wealthfolio-addons/dist/local-release-plan.json
           if-no-files-found: error
+
+  release:
+    name: Release local addons
+    needs: checks
+    if: github.event_name == 'push' && needs.checks.outputs.releases != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: local-addon-packages
+      - name: Publish the verified archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/publish-local-releases.mjs dist/local-release-plan.json
