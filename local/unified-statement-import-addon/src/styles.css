@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "@wealthfolio/import-wizard-ui/styles.css";
+@source "./**/*.{ts,tsx}";
+
+@layer base {
+  .statement-import,
+  .statement-import *,
+  .statement-import ::before,
+  .statement-import ::after {
+    border-color: var(--border);
+  }
+}

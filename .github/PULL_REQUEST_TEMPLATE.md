@@ -1,7 +1,15 @@
 <!--
 Adding or updating a community directory listing? Fill in everything below.
 Changing an official addon instead? Delete this template and describe the change.
+Changing local addons? Keep the local checklist and describe the change; delete the listing sections.
 -->
+
+## Local addon checklist
+
+- [ ] 修改的 local 插件已同步升级 `manifest.json` 和 `package.json` 版本。
+- [ ] 各插件 `CHANGELOG.md` 已添加对应版本的中文更新说明。
+- [ ] 共享 UI、根锁文件或公共 TypeScript 配置变更时，全部 local 插件均已升版。
+- [ ] `pnpm check`、`pnpm bundle:local` 和 `pnpm test:package:local` 通过。
 
 ## Listing
 

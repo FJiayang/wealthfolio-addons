@@ -2,15 +2,22 @@
   "name": "wealthfolio-addons",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "packageManager": "pnpm@10.33.4",
   "workspaces": [
-    "official/*"
+    "official/*",
+    "local/*",
+    "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "build:official": "pnpm -r --filter './official/*' build",
     "bundle:official": "pnpm -r --filter './official/*' bundle",
     "type-check:official": "pnpm -r --filter './official/*' type-check",
+    "type-check:local": "pnpm -r --filter './local/*' --filter './packages/*' type-check",
+    "test:local": "pnpm -r --filter './local/*' --filter './packages/*' test",
+    "bundle:local": "pnpm -r --filter './local/*' bundle",
+    "test:package:local": "pnpm -r --filter './local/*' test:package",
+    "test:release": "node --test scripts/local-release.test.mjs",
+    "validate:local-release": "node scripts/local-release.mjs",
     "validate:addons": "node scripts/validate-addons.mjs",
     "derive:community": "node scripts/derive-community.mjs",
     "test:schema": "node scripts/test-schema.mjs",
@@ -18,10 +25,11 @@
     "release:official": "node scripts/release-official.mjs",
     "generate:readme": "node scripts/generate-readme.mjs",
     "generate": "pnpm generate:readme",
-    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test"
+    "check": "pnpm test:schema && pnpm test:derive && pnpm validate:addons && pnpm type-check:official && pnpm --filter swingfolio-addon test && pnpm type-check:local && pnpm test:local"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
-  }
+  },
+  "packageManager": "pnpm@10.33.4"
 }

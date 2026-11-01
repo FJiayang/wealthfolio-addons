@@ -1,0 +1,256 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { parseStatementSync as parseStatement } from "../parsers";
+import { account, activity, csvRow, HEADER } from "../test-fixtures";
+import { buildPreview, METADATA_KEY, restoreMappings } from "./ledger";
+
+const rows = (...lines: string[]) =>
+  parseStatement(new TextEncoder().encode([HEADER, ...lines].join("\n")), "fictional.csv").rows;
+const cash = account();
+const mapping = { 账户余额: "cash" };
+
+describe("预览、来源和重复检测", () => {
+  it.each(["餐饮美食", "  餐饮美食  ", "", "   "])("将原始分类 %j 写入备注，保留原备注与来源", (category) => {
+    const parsed = rows(csvRow());
+    parsed[0].source.category = category;
+    parsed[0].source.remark = "原始备注";
+    const create = buildPreview(parsed, [cash], [], mapping, {})[0].create!;
+    expect(create.comment).toContain("虚构商户 · 测试商品 · 原始备注");
+    expect(create.comment).toContain("支付宝订单号：fictional-order-1");
+    if (category.trim()) expect(create.comment).toContain("支付宝分类：餐饮美食");
+    else expect(create.comment).not.toContain("支付宝分类：");
+    expect(create.metadata).toMatchObject({ [METADATA_KEY]: { sources: [expect.objectContaining({ category })] } });
+  });
+  it("旧版未包含分类备注的账目仍识别为重复且不覆盖", () => {
+    const parsed = rows(csvRow());
+    const create = buildPreview(parsed, [cash], [], mapping, {})[0].create!;
+    const legacy = activity({ ...create, comment: "用户保留的旧备注" });
+    expect(buildPreview(parsed, [cash], [legacy], mapping, {})[0]).toMatchObject({ status: "duplicate", create: undefined });
+    expect(legacy.notes).toBe("用户保留的旧备注");
+  });
+  it.skipIf(!process.env.STATEMENT_DEMO_PATH)("DEMO 预览默认跳过不计收支，不生成个人账目", () => {
+    const parsed = parseStatement(readFileSync(process.env.STATEMENT_DEMO_PATH!), "DEMO.csv").rows;
+    const preview = buildPreview(parsed, [cash], [], {}, {});
+    const neutral = preview.filter((entry) => entry.row.source.direction === "不计收支");
+    expect(neutral).toHaveLength(22);
+    expect(neutral.every((entry) => entry.status === "excluded" && !entry.create)).toBe(true);
+    expect(preview.filter((entry) => entry.reason === "不计收支，默认跳过个人记账")).toHaveLength(20);
+  });
+  it("不计收支默认跳过，恢复后必须补齐，交易关闭不能恢复", () => {
+    const parsed = rows(csvRow({ direction: "不计收支", method: "因公付" }));
+    expect(buildPreview(parsed, [], [], {}, {})[0]).toMatchObject({
+      status: "excluded",
+      reason: "不计收支，默认跳过个人记账",
+      create: undefined,
+    });
+    expect(buildPreview(parsed, [cash], [], {}, { 2: { excluded: false } })[0].status).toBe(
+      "review",
+    );
+    const restored = { excluded: false, kind: "expense" as const, accountId: "cash" };
+    expect(buildPreview(parsed, [cash], [], {}, { 2: restored })[0]).toMatchObject({
+      status: "ready",
+    });
+    expect(
+      buildPreview(
+        parsed,
+        [cash],
+        [],
+        {},
+        { 2: { ...restored, confirmed: true, amount: "bad" } },
+      )[0].status,
+    ).toBe("error");
+    expect(
+      buildPreview(parsed, [cash], [], {}, { 2: { ...restored, confirmed: true } })[0].status,
+    ).toBe("ready");
+    const closed = rows(csvRow({ direction: "不计收支", status: "交易关闭" }));
+    expect(
+      buildPreview(closed, [cash], [], {}, { 2: { ...restored, confirmed: true } })[0],
+    ).toMatchObject({ status: "excluded", reason: "交易关闭" });
+    const refund = rows(csvRow({ direction: "不计收支", status: "退款成功" }));
+    expect(buildPreview(refund, [cash], [], mapping, {})[0]).toMatchObject({
+      status: "ready",
+      kind: "refund",
+    });
+  });
+  it("人工核对不能绕过金额、账户或来源错误，字段校验优先展示", () => {
+    const parsed = rows(csvRow({ method: "信用卡&红包" }));
+    const decisions = {
+      2: { accountId: "cash", kind: "expense" as const, confirmed: true, amount: "bad" },
+    };
+    expect(buildPreview(parsed, [cash], [], {}, decisions)[0]).toMatchObject({
+      status: "error",
+      reason: "确认金额格式不正确",
+    });
+    expect(
+      buildPreview(parsed, [cash], [], {}, { 2: { ...decisions[2], confirmed: false } })[0].status,
+    ).toBe("error");
+    expect(
+      buildPreview(
+        parsed,
+        [cash],
+        [],
+        {},
+        { 2: { ...decisions[2], amount: "10", accountId: "missing" } },
+      )[0].status,
+    ).toBe("review");
+    expect(
+      buildPreview(rows(csvRow({ id: "" })), [cash], [], mapping, { 2: { confirmed: true } })[0]
+        .create,
+    ).toBeUndefined();
+  });
+  it("推断与保存映射共用预览入口，逐行人工选择及清空优先", () => {
+    const method = "招商银行信用卡(1234)";
+    const parsed = rows(csvRow({ method }));
+    const accounts = [
+      { ...account("card", "CREDIT_CARD"), name: "招商银行信用卡", accountNumber: "1234" },
+      cash,
+    ];
+    expect(buildPreview(parsed, accounts, [], {}, {})[0]).toMatchObject({
+      status: "ready",
+      accountId: "card",
+    });
+    expect(buildPreview(parsed, accounts, [], { [method]: "cash" }, {})[0].accountId).toBe("cash");
+    expect(
+      buildPreview(parsed, accounts, [], { [method]: "card" }, { 2: { accountId: "cash" } })[0]
+        .accountId,
+    ).toBe("cash");
+    expect(buildPreview(parsed, accounts, [], {}, { 2: { accountId: "" } })[0].status).toBe(
+      "review",
+    );
+    expect(buildPreview(rows(csvRow({ method, status: "处理中" })), accounts, [], {}, {})[0])
+      .toMatchObject({ status: "review", kind: "expense", reason: "交易状态需要确认" });
+    expect(buildPreview(rows(csvRow({ method: `${method}&红包` })), accounts, [], { [`${method}&红包`]: "card" }, {})[0].status)
+      .toBe("ready");
+  });
+
+  it("异常状态需要明确核对，确认后逐笔创建且保留来源状态", () => {
+    const parsed = rows(csvRow({ status: "未知业务成功" }));
+    expect(buildPreview(parsed, [cash], [], mapping, {})[0])
+      .toMatchObject({ status: "review", kind: "expense", create: undefined });
+    expect(buildPreview(parsed, [cash], [], mapping, { 2: { confirmed: true } })[0])
+      .toMatchObject({ status: "ready", create: { metadata: { [METADATA_KEY]: { sources: [expect.objectContaining({ status: "未知业务成功" })] } } } });
+  });
+
+  it("创建备注及完整来源，精度和原始金额不受人工确认影响", () => {
+    const parsed = rows(csvRow({ method: "信用卡&红包" }));
+    const preview = buildPreview(
+      parsed,
+      [cash],
+      [],
+      {},
+      { 2: { kind: "expense", accountId: "cash", amount: "10.01", confirmed: true } },
+    );
+    expect(preview[0].status).toBe("ready");
+    expect(preview[0].create).toMatchObject({
+      amount: "10.01",
+      comment: expect.stringContaining("fictional-order-1"),
+      metadata: {
+        [METADATA_KEY]: {
+          version: 1,
+          sources: [
+            expect.objectContaining({
+              amount: "12.30",
+              paymentMethod: "信用卡&红包",
+              lineNumber: 2,
+            }),
+          ],
+          booking: { amount: "10.01" },
+        },
+      },
+    });
+  });
+  it("检测同批、跨文件和跨账户重复；重新映射不新增", () => {
+    const parsed = rows(csvRow(), csvRow());
+    const first = buildPreview(parsed, [cash], [], mapping, {});
+    expect(first.map((row) => row.status)).toEqual(["ready", "duplicate"]);
+    const stored = activity(first[0].create!);
+    const renamed = parsed.map((row) => ({
+      ...row,
+      source: { ...row.source, fileName: "another.csv", lineNumber: row.source.lineNumber + 10 },
+    }));
+    expect(
+      buildPreview(renamed, [cash, account("other")], [stored], { 账户余额: "other" }, {}).map(
+        (row) => row.status,
+      ),
+    ).toEqual(["duplicate", "duplicate"]);
+    stored.notes = "用户改过备注";
+    stored.amount = "20.00";
+    expect(buildPreview(parsed, [cash], [stored], mapping, {})[0].status).toBe("duplicate");
+    expect(stored.notes).toBe("用户改过备注");
+  });
+  it("同日同额不同订单都可提交，备注区分核心指纹", () => {
+    const preview = buildPreview(
+      rows(csvRow(), csvRow({ id: "different-order" })),
+      [cash],
+      [],
+      mapping,
+      {},
+    );
+    expect(preview.map((entry) => entry.status)).toEqual(["ready", "ready"]);
+    expect(preview[0].create!.comment).not.toBe(preview[1].create!.comment);
+  });
+  it("同一来源内容冲突全部阻止；已有多重关联需人工核对", () => {
+    const parsed = rows(csvRow());
+    const stored = activity(buildPreview(parsed, [cash], [], mapping, {})[0].create!);
+    expect(
+      buildPreview(rows(csvRow({ amount: "20" })), [cash], [stored], mapping, {})[0].status,
+    ).toBe("error");
+    expect(
+      buildPreview(rows(csvRow(), csvRow({ amount: "20" })), [cash], [], mapping, {}).every(
+        (row) => row.status === "error",
+      ),
+    ).toBe(true);
+    expect(
+      buildPreview(parsed, [cash], [stored, { ...stored, id: "another" }], mapping, {})[0].status,
+    ).toBe("review");
+  });
+  it("缺号、未知状态、未映射或账户已不存在时不能就绪", () => {
+    expect(buildPreview(rows(csvRow({ id: "" })), [cash], [], mapping, {})[0].status).toBe(
+      "review",
+    );
+    expect(buildPreview(rows(csvRow({ status: "未知" })), [cash], [], mapping, {})[0].status).toBe(
+      "review",
+    );
+    expect(buildPreview(rows(csvRow()), [cash], [], {}, {})[0].status).toBe("review");
+    expect(buildPreview(rows(csvRow()), [], [], mapping, {})[0].status).toBe("review");
+  });
+  it("识别收入、退款，不因账户类型阻止入账；关闭交易不能强行恢复", () => {
+    const parsed = rows(
+      csvRow({ direction: "收入", id: "income" }),
+      csvRow({ direction: "不计收支", status: "退款成功", id: "refund" }),
+      csvRow({ status: "交易关闭", id: "closed" }),
+    );
+    const preview = buildPreview(parsed, [cash], [], mapping, { 4: { confirmed: true } });
+    expect(preview[0].create!.activityType).toBe("DEPOSIT");
+    expect(preview[1].create).toMatchObject({ activityType: "CREDIT", subtype: "REFUND" });
+    expect(preview[2].status).toBe("excluded");
+    expect(
+      buildPreview(parsed, [account("card", "CREDIT_CARD")], [], { 账户余额: "card" }, {})[0]
+        .status,
+    ).toBe("ready");
+  });
+  it("恢复映射保留所有已存在账户，拒绝损坏配置", () => {
+    const all = [
+      cash,
+      { ...account("archived"), isArchived: true },
+      account("card", "CREDIT_CARD"),
+      account("investment", "SECURITIES"),
+      { ...account("holdings"), trackingMode: "HOLDINGS" as const },
+    ];
+    expect(
+      restoreMappings(
+        JSON.stringify({ a: "cash", b: "missing", c: "archived", d: "card", e: "investment" }),
+        all,
+      ),
+    ).toEqual({ a: "cash", c: "archived", d: "card", e: "investment" });
+    expect(restoreMappings('{"余额宝":"holdings"}', all)).toEqual({ 余额宝: "holdings" });
+    expect(restoreMappings(null, all)).toEqual({});
+    expect(() => restoreMappings("[]", all)).toThrow();
+  });
+  it("未知版本或损坏来源不静默跳过", () => {
+    const parsed = rows(csvRow());
+    const stored = activity(buildPreview(parsed, [cash], [], mapping, {})[0].create!);
+    stored.metadata = { [METADATA_KEY]: { version: 2, sources: [] } };
+    expect(() => buildPreview(parsed, [cash], [stored], mapping, {})).toThrow("不兼容");
+  });
+});

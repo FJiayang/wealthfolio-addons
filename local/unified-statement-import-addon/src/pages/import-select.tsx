@@ -1,0 +1,37 @@
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@wealthfolio/ui";
+
+export function ImportSelect({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange(value: string): void;
+  disabled?: boolean;
+}) {
+  return (
+    <Select
+      value={value || "__none__"}
+      onValueChange={(value) => onChange(value === "__none__" ? "" : (value ?? ""))}
+      disabled={disabled}
+    >
+      <SelectTrigger aria-label={label}>
+        <SelectValue>
+          {options.find((option) => option.value === value)?.label ?? "请选择"}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">请选择</SelectItem>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}

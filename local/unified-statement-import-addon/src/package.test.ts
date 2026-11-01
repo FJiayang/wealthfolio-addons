@@ -1,0 +1,55 @@
+import { readFileSync } from "node:fs";
+import { unzipSync, strFromU8 } from "fflate";
+import { expect, it } from "vitest";
+
+it("安装包只有运行文件和说明，没有源账单、测试及商店元数据", () => {
+  const files = unzipSync(
+    readFileSync(new URL(`../dist/unified-statement-import-addon-${JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version}.zip`, import.meta.url)),
+  );
+  const names = Object.keys(files);
+  expect(names).toEqual(
+    expect.arrayContaining([
+      "manifest.json",
+      "README.md",
+      "LICENSE",
+      "licenses/sheetjs-LICENSE.txt",
+      "dist/addon.js",
+      "dist/unified-statement-import-addon.css",
+    ]),
+  );
+  expect(
+    names.some(
+      (name) =>
+        /\.(csv|test\.ts|map|zip)$/.test(name) ||
+        name.startsWith("src/") ||
+        name.endsWith("addon.store.json"),
+    ),
+  ).toBe(false);
+  const manifest = JSON.parse(strFromU8(files["manifest.json"]));
+  expect(Object.keys(manifest.contributes.links)).toEqual(["spending-import"]);
+  expect(manifest.contributes.links["spending-import"][0].route).toBe(
+    manifest.contributes.routes[0].id,
+  );
+  expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.11.0");
+  expect(
+    manifest.permissions.find(
+      (permission: { category: string }) => permission.category === "activities",
+    ).functions,
+  ).toEqual(["getAll", "saveMany", "getTransferPair", "linkTransfer"]);
+  expect(manifest.network).toBeUndefined();
+  expect(strFromU8(files["dist/addon.js"])).not.toContain("synthetic-order-001");
+  const code = strFromU8(files["dist/addon.js"]);
+  expect(code).not.toMatch(/from\s*["']xlsx["']/);
+  expect(code).not.toMatch(/from\s*["']@wealthfolio\/import-wizard-ui["']/);
+  for (const imported of code.matchAll(/import\s*\{([^}]+)\}\s*from\s*["']@wealthfolio\/ui["']/g))
+    expect(imported[1]).not.toMatch(
+      /\b(ImportWizardLayout|ImportResultSummary|FileDropzone|StepNavigation|WizardStepIndicator|CancelConfirmationDialog)\b/,
+    );
+  const css = strFromU8(files["dist/unified-statement-import-addon.css"]);
+  expect(css).toContain("var(--muted-foreground)");
+  expect(css).toContain(".h-dvh");
+  expect(css).toContain(".grid-cols-2");
+  expect(css).toContain(".bg-success-subtle");
+  expect(css).toContain(".border-destructive-subtle-border");
+  expect(css).not.toContain("statement-import-grid");
+});

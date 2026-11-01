@@ -3,6 +3,7 @@ dist/
 *.zip
 *.tsbuildinfo
 .pnpm-debug.log*
+e2e/test-results/
 
 .env
 .env.local
