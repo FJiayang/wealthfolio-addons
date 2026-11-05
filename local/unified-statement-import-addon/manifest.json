@@ -1,12 +1,12 @@
 {
   "id": "unified-statement-import-addon",
   "name": "账单导入",
-  "version": "0.2.1",
-  "description": "本地解析支付平台与银行账单，映射账户、核对来源、拆分手续费并关联真实转账。",
+  "version": "0.3.0",
+  "description": "本地解析支付平台与银行表格及 PDF，核对来源、自动关联消费、拆分手续费并关联真实转账。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
-  "sdkVersion": "3.11.0",
-  "minWealthfolioVersion": "3.11.0",
+  "sdkVersion": "3.12.0",
+  "minWealthfolioVersion": "3.12.0",
   "enabled": true,
   "contributes": {
     "routes": [
@@ -27,8 +27,8 @@
     }
   },
   "hostDependencies": {
-    "@wealthfolio/addon-sdk": "^3.11.0",
-    "@wealthfolio/ui": "^3.11.0",
+    "@wealthfolio/addon-sdk": "^3.12.0",
+    "@wealthfolio/ui": "^3.12.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -41,7 +41,7 @@
     {
       "category": "activities",
       "functions": ["getAll", "saveMany", "getTransferPair", "linkTransfer"],
-      "purpose": "读取来源以检测重复，并保存用户确认的新增记录。"
+      "purpose": "读取来源检测重复，保存审核后的流水，并更新或取消银行与三方消费关联及对应记账金额。"
     }
   ]
 }

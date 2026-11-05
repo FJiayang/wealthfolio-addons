@@ -37,6 +37,8 @@ export interface Profile {
   signature?: RegExp;
   bank?: boolean;
   credit?: boolean;
+  creditSigned?: boolean;
+  dateOrder?: "dmy" | "mdy";
   trailingEmpty?: boolean;
   explicitSign?: boolean;
   amountMode?: "net" | "expenseFirst" | "incomeFirst";
@@ -196,6 +198,44 @@ export const profiles: Profile[] = [
     amountMode: "net",
     columns: { remark: ["备注", "用途"] },
   }),
+  profile("cmbc-debit", "cmbc", "民生银行", ["交易时间", "摘要", "交易金额", "账户余额"], {
+    bank: true,
+    columns: { balance: ["账户余额"], recordId: ["凭证号码"], merchant: ["对方户名/账号"] },
+  }),
+  profile("cmbc-credit", "cmbc", "民生银行", ["交易日", "记账日", "卡号末四位", "金额"], {
+    bank: true, credit: true, creditSigned: true,
+  }),
+  profile("webank-debit", "webank", "微众银行", ["记账日期", "借贷标志", "对方户名", "余额"], {
+    bank: true,
+  }),
+  profile("icbc-debit-pdf", "icbc", "工商银行", ["交易日期", "帐号", "收入/支出金额", "余额"], {
+    bank: true,
+    columns: { account: ["帐号"], amount: ["收入/支出金额"], peerAccount: ["对方帐号"] },
+  }),
+  profile("boc-debit-pdf", "boc", "中国银行", ["记账日期", "记账时间", "币别", "对方开户行"], {
+    bank: true,
+    columns: { peerAccount: ["对方卡号/账号"] },
+  }),
+  profile("hsbchk-debit", "hsbchk", "汇丰香港", ["Date", "Description", "Billing amount", "Billing currency", "Balance"], {
+    bank: true, dateOrder: "dmy",
+    columns: { time: ["Date"], description: ["Description"], amount: ["Billing amount"], currency: ["Billing currency"], balance: ["Balance"] },
+  }),
+  profile("hsbchk-credit", "hsbchk", "汇丰香港", ["Transaction date", "Post date", "Billing amount", "Billing currency", "Transaction status"], {
+    bank: true, credit: true, creditSigned: true, dateOrder: "dmy",
+    columns: { time: ["Transaction date"], postingDate: ["Post date"], description: ["Description"], merchant: ["Merchant name"], amount: ["Billing amount"], currency: ["Billing currency"], status: ["Transaction status"], direction: ["Credit / Debit"] },
+  }),
+  profile("bmo-debit", "bmo", "BMO 蒙特利尔银行", ["First Bank Card", "Transaction Type", "Date Posted", "Transaction Amount", "Description"], {
+    bank: true,
+    columns: { time: ["Date Posted"], account: ["First Bank Card"], amount: ["Transaction Amount"], description: ["Description"], direction: ["Transaction Type"], currency: ["Currency", "币种", "货币"] },
+  }),
+  profile("bmo-credit", "bmo", "BMO 蒙特利尔银行", ["Item #", "Card #", "Transaction Date", "Posting Date", "Transaction Amount", "Description"], {
+    bank: true, credit: true,
+    columns: { time: ["Transaction Date"], postingDate: ["Posting Date"], account: ["Card #"], amount: ["Transaction Amount"], description: ["Description"], currency: ["Currency", "币种", "货币"] },
+  }),
+  profile("td-debit", "td", "TD 道明银行", ["Date", "Transaction Description", "Withdrawals", "Deposits", "Balance"], {
+    bank: true, dateOrder: "mdy",
+    columns: { time: ["Date"], description: ["Transaction Description"], expense: ["Withdrawals"], income: ["Deposits"], balance: ["Balance"], currency: ["Currency", "币种", "货币"] },
+  }),
   profile("jd", "jd", "京东金融", ["交易时间", "交易说明", "交易分类", "交易状态", "金额"], {
     trailingEmpty: true,
   }),
@@ -246,6 +286,7 @@ export function matchesProfile(
   records?: CsvRecord[],
 ): boolean {
   const normalized = headers.map((value) => value.normalize("NFKC").trim());
+  if (p.id === "boc-debit-pdf" && normalized.includes("借记卡号")) return false;
   return (
     p.required.every((name) => normalized.includes(name.normalize("NFKC"))) &&
     (!p.signature || !records || records.some(({ cells }) => p.signature!.test(cells.join(" "))))
@@ -288,7 +329,7 @@ function currency(value: string): string {
   return match[1];
 }
 
-export function parseProfile(p: Profile, records: CsvRecord[], fileName: string): StatementRow[] {
+export function parseProfile(p: Profile, records: CsvRecord[], fileName: string, selectedCurrency?: string): StatementRow[] {
   const headerIndex = records.findIndex(({ cells }) => matchesProfile(p, cells, records));
   if (headerIndex < 0) throw new Error("缺少账单必需列。");
   const headers = records[headerIndex].cells.map((cell) => cell.normalize("NFKC").trim());
@@ -300,7 +341,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
     .map(({ cells }) => cells.join(" "))
     .join("\n");
   const headerAccount =
-    /(?:账户账号|账户号码|账号|卡号|支付宝账户|微信昵称)[：:\s]+([\w@.*-]+)/.exec(title)?.[1] ?? "";
+    /(?:账户账号|账户号码|账号|卡号|支付宝账户|微信昵称)[：:\s]+([\w@.*＊•·-]+)/.exec(title)?.[1] ?? "";
   const headerCurrency = /(?:卡内账户|币种|币别)[：:\s]*([^\n]+)/.exec(title)?.[1] ?? "";
   const rows: StatementRow[] = [];
   for (const record of records.slice(headerIndex + 1)) {
@@ -325,7 +366,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       const value = index === undefined ? "" : (cells[index] ?? "").trim();
       return value === "/" && field !== "direction" ? "" : value;
     };
-    const account = get("account") || headerAccount || (p.credit ? get("method") : "");
+    const account = (get("account") || headerAccount || (p.credit ? get("method") : "")).normalize("NFKC").replace(/^'+|'+$/g, "");
     const source: StatementSource = {
       system: p.channel,
       variantId:
@@ -342,6 +383,8 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       sourceAccount: account,
       fileName,
       lineNumber: record.lineNumber,
+      pageNumber: record.pageNumber,
+      pageLineNumber: record.pageLineNumber,
       originalTime: get("time") || get("postingDate"),
       date: "",
       amount: get("amount"),
@@ -387,7 +430,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
         if (p.explicitSign && !/^[+-]/.test(raw)) throw new Error("农业银行金额缺少显式正负号。");
         signed = cleanAmount(raw);
         if (p.amountDivisor === 100) signed = fromMinorUnits(signed);
-        if (p.credit) signed = negate(signed);
+        if (p.credit && !p.creditSigned) signed = negate(signed);
       }
       source.amount = absolute(signed);
       source.signedAmount = signed;
@@ -408,6 +451,11 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
           reviews.push("未知借贷标志");
         }
       }
+      if (p.id === "bmo-debit") {
+        if (source.direction === "DEBIT") kind = "expense";
+        else if (source.direction === "CREDIT") kind = "income";
+        else reviews.push("未知借贷标志");
+      }
       const type = (source.txType || source.description).replace(/^[（(]([^）)]+)[）)]/, "$1 ");
       if (p.id === "bocom-credit") {
         if (/^(退货|信用卡还款|红包还款|刷卡金返还|自动购汇还款)/.test(type)) kind = "income";
@@ -426,6 +474,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       }
       if (
         p.channel === "wechat" &&
+        kind !== "refund" &&
         !/^(商户消费|微信红包|转账|二维码收款|扫二维码付款|群收款|退款|转入零钱通|零钱充值|零钱提现|信用卡还款|购买理财通|零钱通转出|亲属卡交易|赞赏码|其他|分分捐)/.test(
           source.txType ?? "",
         )
@@ -433,6 +482,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
         reviews.push("未知微信交易类型");
       transfer =
         /^(转入|转出|转账|借入|借出|收债|还债|代付|报销)$/.test(source.direction) ||
+        (p.bank && /转账|汇款/.test(type)) ||
         /零钱充值|零钱提现|信用卡还款|购汇|结汇|充值|提现|还款|转入零钱通|零钱通转出/.test(type);
       if (source.system === "feidee" && source.direction === "退款") kind = "refund";
       if (transfer) {
@@ -453,7 +503,14 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
     try {
       let parsed;
       try {
-        parsed = statementDate(get("time"), get("clock"), title);
+        let time = get("time");
+        if (p.dateOrder) time = time.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, a, b, year) => `${year}-${p.dateOrder === "dmy" ? b : a}-${p.dateOrder === "dmy" ? a : b}`);
+        if (p.id === "cmbc-credit" && /^\d{4}$/.test(time) && /^\d{8}$/.test(get("postingDate"))) {
+          const posting = get("postingDate");
+          const year = Number(posting.slice(0, 4)) - (Number(time.slice(0, 2)) > Number(posting.slice(4, 6)) ? 1 : 0);
+          time = `${year}${time}`;
+        }
+        parsed = statementDate(time, get("clock"), title);
       } catch (error) {
         if (!get("postingDate") || (get("time") && p.channel !== "cib")) throw error;
         parsed = statementDate(get("postingDate"), "", title);
@@ -472,8 +529,8 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       const fixedCny =
         !p.bank ||
         ["spdb", "abc"].includes(p.channel) ||
-        ["bocom-debit", "cmb-credit"].includes(p.id);
-      source.currency = currency(get("currency") || statementCurrency || (fixedCny ? "CNY" : ""));
+        ["bocom-debit", "cmb-credit", "cmbc-debit", "cmbc-credit"].includes(p.id);
+      source.currency = currency(get("currency") || statementCurrency || selectedCurrency || (fixedCny ? "CNY" : ""));
     } catch (error) {
       errors.push(error instanceof Error ? error.message : "币种错误");
     }
@@ -489,8 +546,9 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       else reviews.push("无法提取手续费，请核实源文件");
       softSkip = softSkip || !source.fee || compare(source.fee, "0") > 0;
     }
-    if (p.channel === "wechat" && source.direction === "收入" && !source.paymentMethod)
+    if (p.channel === "wechat" && kind === "income" && source.direction === "收入" && !source.paymentMethod)
       source.paymentMethod = "微信零钱";
+    if (p.id === "hsbchk-credit" && source.status !== "POSTED") reviews.push("尚未入账的信用卡交易，请核对");
     if (
       !p.bank &&
       source.status &&
@@ -511,13 +569,14 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
     if (p.bank && !source.direction && kind)
       source.direction =
         kind === "income" || kind === "refund" || kind === "transferIn" ? "收入" : "支出";
-    const unsupportedReason = /购买理财通|基金申购|基金赎回/.test(
-      source.txType || source.description,
+    const unsupportedReason = /购买理财通|基金申购|基金赎回|(?:^|\s)(?:申购|赎回)(?:$|\s)|理财(?:购买|申购|赎回)|证券买入|证券卖出|基金销售|理财有限责任公司/.test(
+      `${source.txType || source.description} ${source.merchant}`,
     )
       ? "基金及证券交易请使用投资导入插件"
       : source.remark.includes("服务费") && !source.fee
         ? "无法确认手续费金额，请核实原文件后重新导入"
         : undefined;
+    if (unsupportedReason?.includes("投资导入")) softSkip = true;
     const excluded = ["交易关闭", "已关闭", "已撤销"].includes(source.status);
     const identityReason = p.bank && !account ? "缺少来源账户标识，请在上传页补全" : undefined;
     rows.push({
@@ -526,11 +585,11 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
       transfer,
       excluded,
       defaultExcluded: softSkip,
-      skipReason: transfer
+      skipReason: unsupportedReason ?? (transfer
         ? "转账默认跳过，请确认后恢复"
         : source.fee
           ? "手续费需确认后拆分"
-          : "不计收支，默认跳过",
+          : "不计收支，默认跳过"),
       reviewReason: reviews.length ? reviews.join("；") : undefined,
       error: errors.length ? errors.join("；") : undefined,
       identityReason,
@@ -542,6 +601,14 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string)
 }
 
 const variantLabels: Record<string, string> = {
+  "cmbc-debit": "借记卡 PDF 对账单",
+  "cmbc-credit": "信用卡 CSV 对账单",
+  "icbc-debit-pdf": "借记账户历史明细 PDF",
+  "boc-debit-pdf": "借记卡流水明细 PDF",
+  "hsbchk-debit": "借记卡 CSV",
+  "hsbchk-credit": "信用卡 CSV",
+  "bmo-debit": "借记卡 CSV",
+  "bmo-credit": "信用卡 CSV",
   jd: "账单金额以元计（默认）",
   "jd-cents": "整数金额以分计（需明确选择）",
   "cmb-debit": "借记卡交易明细",
@@ -572,9 +639,9 @@ export const channelParsers: StatementParser[] = [...new Set(profiles.map((p) =>
       })),
       id: channel,
       displayName: name,
-      formats: ["csv", "xls", "xlsx"],
+      formats: ["csv", "xls", "xlsx", ...(["cmb", "cmbc", "icbc", "boc", "webank"].includes(channel) ? ["pdf"] : [])],
       uploadLabel: `上传${name}账单`,
-      fileHint: `${name} · CSV / XLS / XLSX`,
+      fileHint: `${name} · CSV / XLS / XLSX${["cmb", "cmbc", "icbc", "boc", "webank"].includes(channel) ? " / PDF" : ""}`,
       recordIdLabel: "来源编号",
       fieldMappingHint:
         "账单日期 → 日期；金额及渠道方向 → 记账性质；来源账户／付款方式 → 实际资金账户；来源编号用于去重。",
@@ -596,14 +663,14 @@ export const channelParsers: StatementParser[] = [...new Set(profiles.map((p) =>
         ],
       })),
       matches: (headers) => variants.some((p) => matchesProfile(p, headers)),
-      parse: (records, fileName, variantId) => {
+      parse: (records, fileName, variantId, selectedCurrency) => {
         const matches = variants.filter(
           (p) =>
             (variantId ? p.id === variantId : !p.manualOnly) &&
             records.some(({ cells }) => matchesProfile(p, cells, records)),
         );
         if (matches.length !== 1) throw new Error("导出变体不明确，请核对文件签名及必需列。");
-        return parseProfile(matches[0], records, fileName);
+        return parseProfile(matches[0], records, fileName, selectedCurrency);
       },
     };
   },

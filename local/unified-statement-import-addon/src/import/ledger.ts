@@ -1,4 +1,5 @@
-import type { Account, Activity, ActivityCreate } from "@wealthfolio/addon-sdk";
+import type { Account, Activity, ActivityCreate, ActivityUpdate } from "@wealthfolio/addon-sdk";
+import { applyAssociations, type Association } from "./associations";
 import { normalizeAmount } from "../parsers/csv";
 import {
   entryActivityTypes,
@@ -23,6 +24,7 @@ export type ExistingActivity = Pick<Activity, "id" | "metadata"> &
     >
   >;
 export interface RowDecision {
+  cancelledAssociations?: string[];
   feeConfirmed?: boolean;
   feeAccountId?: string;
   feeAmount?: string;
@@ -36,6 +38,8 @@ export type Decisions = Record<string, RowDecision>;
 export const rowKey = (row: StatementRow): string => row.rowId ?? String(row.source.lineNumber);
 export type PreviewStatus = "ready" | "duplicate" | "excluded" | "review" | "error";
 export interface PreviewRow {
+  association?: Association;
+  updates?: ActivityUpdate[];
   row: StatementRow;
   accountId: string;
   kind?: EntryKind;
@@ -155,6 +159,7 @@ export function readSources(activity: ExistingActivity): StatementSource[] {
         "transactionAmount",
         "transactionCurrency",
       ].some((key) => source[key] !== undefined && typeof source[key] !== "string") ||
+      ["pageNumber", "pageLineNumber"].some((key) => source[key] !== undefined && (!Number.isInteger(source[key]) || Number(source[key]) < 1)) ||
       (source.compositeIdentity !== undefined && typeof source.compositeIdentity !== "boolean")
     )
       throw new Error("已有账目的导入来源信息不完整，已停止检测。");
@@ -190,7 +195,7 @@ export function buildPreview(
     }
   }
   const seen = new Set<string>();
-  return rows.map((row) => {
+  const preview = rows.map((row) => {
     const { source } = row;
     const decision = decisions[rowKey(row)] ?? {};
     const rule = row.error
@@ -340,17 +345,19 @@ export function buildPreview(
       existingIds: matches.map((match) => match.id),
     };
   });
+  return applyAssociations(preview, activities, decisions);
 }
 
 export function previewSignature(preview: PreviewRow[]): string {
   return JSON.stringify(
-    preview.map(({ row, accountId, status, reason, create, creates }) => [
+    preview.map(({ row, accountId, status, reason, create, creates, updates }) => [
       rowKey(row),
       accountId,
       status,
       reason,
       create,
       creates,
+      updates,
     ]),
   );
 }

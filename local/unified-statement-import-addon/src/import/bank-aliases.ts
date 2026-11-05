@@ -17,6 +17,10 @@ const banks: Record<string, string[]> = {
   浙商银行: ["浙商"],
   渤海银行: ["渤海"],
   恒丰银行: ["恒丰"],
+  微众银行: ["深圳前海微众银行", "微众"],
+  汇丰香港: ["汇丰银行香港", "香港汇丰银行", "香港上海汇丰银行", "hsbchk", "hsbc"],
+  蒙特利尔银行: ["bmo蒙特利尔银行", "bmo"],
+  道明银行: ["td道明银行", "td"],
 };
 
 export const bankAliases = Object.entries(banks)
