@@ -8,6 +8,8 @@ export const entryActivityTypes: Record<EntryKind, string> = {
 };
 
 export interface StatementSource {
+  pageNumber?: number;
+  pageLineNumber?: number;
   sourceAccount?: string;
   sheetName?: string;
   balance?: string;
@@ -68,7 +70,7 @@ export interface StatementParser {
   mappingHint(count: string): string;
   recordIdLabel: string;
   matches(headers: readonly string[]): boolean;
-  parse(records: CsvRecord[], fileName: string, variantId?: string): StatementRow[];
+  parse(records: CsvRecord[], fileName: string, variantId?: string, currency?: string): StatementRow[];
 }
 
 export interface StatementDocument {
@@ -92,6 +94,8 @@ export interface StatementDocument {
 }
 
 export interface CsvRecord {
+  pageNumber?: number;
+  pageLineNumber?: number;
   error?: string;
   cells: string[];
   lineNumber: number;

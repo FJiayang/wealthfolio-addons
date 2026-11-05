@@ -1,8 +1,5 @@
 import {
   ImportWizardLayout,
-  FileDropzone,
-  WizardStepIndicator,
-  StepNavigation,
   CancelConfirmationDialog,
   ImportResultSummary,
   ImportStatusCards,
@@ -55,6 +52,11 @@ import { useStatementReviewColumns } from "./use-statement-review-columns";
 import { RulesEditor } from "./rules-editor";
 import { TransferPanel } from "./transfer-panel";
 import { RULES_KEY, applyRules, restoreRules, type ImportRule } from "../import/rules";
+import { FileDropzone } from "../components/file-dropzone";
+import { WizardStepIndicator } from "../components/step-indicator";
+import { StepNavigation } from "../components/step-navigation";
+import { StatementAssociations } from "./statement-associations";
+import { cancelSavedAssociation } from "../import/associations";
 type ImportStep = "upload" | "mapping" | "preview" | "confirm" | "result";
 
 const accountTypes: Record<Account["accountType"], string> = {
@@ -114,7 +116,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const [rules, setRules] = useState<ImportRule[]>([]);
   const [selectedSheets, setSelectedSheets] = useState<Record<string, string[]>>({});
   const [sourceAccount, setSourceAccount] = useState("");
+  const [password, setPassword] = useState("");
+  const [currency, setCurrency] = useState("");
   const fileBytes = useRef(new Map<string, Uint8Array>());
+  const fileOptions = useRef(new Map<string, { password?: string; currency?: string }>());
   const uploadSequence = useRef(0);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("");
@@ -187,6 +192,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       });
     return () => {
       active = false;
+      fileOptions.current.clear();
+      fileBytes.current.clear();
     };
   }, [ctx]);
 
@@ -383,13 +390,19 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
         channel: format || undefined,
         variantId: variantId || undefined,
         sourceAccount,
+        password: password || undefined,
+        currency: currency || undefined,
+        assets: ctx.assets,
         fileId: String(++uploadSequence.current),
       });
       fileBytes.current.set(parsed.fileId!, bytes);
+      fileOptions.current.set(parsed.fileId!, { password: password || undefined, currency: currency || undefined });
       if (parsed.parserId !== format) throw new Error("文件与所选流水渠道不符，请核对账单格式。");
       setRawText("");
       setDocuments((current) => [...current, parsed]);
       setSourceAccount("");
+      setPassword("");
+      setCurrency("");
       setStatement(parsed);
       setMappingChoices((current) => current);
       setDecisions((current) => current);
@@ -482,6 +495,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       setStep(result.outcome === "changed" || result.outcome === "empty" ? "preview" : "result");
       if (
         result.outcome === "success" &&
+        !preview.some((entry) => entry.association) &&
         !preview.some((entry) => entry.kind === "transferIn" || entry.kind === "transferOut")
       )
         await viewSpending(true);
@@ -513,6 +527,23 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     }
   }
 
+  async function cancelAssociation(paymentId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const current = await ctx.api.activities.getAll();
+      const updates = cancelSavedAssociation(current, paymentId);
+      const result = await ctx.api.activities.saveMany({ updates });
+      if (result.errors.length || result.updated.length !== updates.length)
+        throw new Error("取消关联未完整保存，请刷新核对。");
+      setActivities(await ctx.api.activities.getAll());
+      setMessage("已取消关联，未被人工修改的三方金额已恢复；双方独立记账，下次不会再次自动关联。");
+    } catch (cause) {
+      setError(cause instanceof Error ? `${cause.message} 请刷新核对后再操作。` : "取消关联结果不明确，请刷新核对后再操作。");
+      setLoaded(false);
+    } finally { setBusy(false); }
+  }
+
   async function resetMappings() {
     setBusy(true);
     try {
@@ -541,8 +572,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setDocuments([]);
     setSelectedSheets({});
     fileBytes.current.clear();
+    fileOptions.current.clear();
     uploadSequence.current = 0;
     setSourceAccount("");
+    setPassword("");
+    setCurrency("");
     setSelectedMappingRows([]);
     setRawText("");
     setSelectedMethods([]);
@@ -566,7 +600,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
 
   const locked = useCallback(
     (entry: PreviewRow) =>
-      busy || entry.status === "excluded" || entry.status === "duplicate" || !!entry.row.error,
+      busy || !!entry.association || entry.status === "excluded" || entry.status === "duplicate" || !!entry.row.error,
     [busy],
   );
   const gridRows = useMemo(
@@ -700,10 +734,24 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     onChange={(value) => {
                       setFormat(value);
                       setVariantId("");
+                      setPassword("");
+                      setCurrency("");
+                      setFile(null);
                     }}
                   />
                   {format && (
                     <>
+                      {!["alipay", "wechat", "jd", "mt", "feidee"].includes(format) && <Choice
+                        label="账单币种（仅文件缺少币种时选择）"
+                        value={currency}
+                        options={["CAD", "USD", "CNY", "HKD", "JPY", "EUR", "GBP", "AUD", "SGD", "CHF"].map((code) => ({ value: code, label: code }))}
+                        onChange={setCurrency}
+                        disabled={busy}
+                      />}
+                      {getStatementParser(format).formats.includes("pdf") && <Input
+                        type="password" aria-label="PDF 密码（仅当前会话）" placeholder="PDF 密码（可选，仅当前会话使用）"
+                        autoComplete="off" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)}
+                      />}
                       {(getStatementParser(format).variants?.length ?? 0) > 1 && (
                         <Choice
                           label="导出变体（留空自动识别）"
@@ -736,6 +784,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                           hint: statementParsers.map((candidate) => candidate.fileHint).join(" · "),
                         }}
                       />
+                      {file && error && <Button variant="outline" disabled={busy} onClick={() => void upload(file)}>重新读取当前文件</Button>}
                       {documents.map((doc) => (
                         <div key={doc.fileId} className="space-y-3 rounded-lg border p-3">
                           <div className="flex flex-wrap items-center gap-2">
@@ -753,7 +802,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                               移除文件
                             </Button>
                           </div>
-                          {doc.sheets?.map((sheet) => (
+                          {doc.sheets?.filter((sheet) => sheet !== "PDF").map((sheet) => (
                             <label key={sheet} className="me-4 inline-flex items-center gap-2">
                               <Checkbox
                                 aria-label={`工作表：${doc.fileName}：${sheet}`}
@@ -794,7 +843,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                                     const updated = await parseStatement(
                                       fileBytes.current.get(doc.fileId!)!,
                                       doc.fileName!,
-                                      { channel: doc.parserId, fileId: doc.fileId, sourceAccount },
+                                      { channel: doc.parserId, fileId: doc.fileId, sourceAccount, assets: ctx.assets, ...fileOptions.current.get(doc.fileId!) },
                                     );
                                     setDocuments((current) =>
                                       current.map((item) =>
@@ -817,7 +866,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                           )}
                         </div>
                       ))}
-                      {statement && <StatementFilePreview document={statement} />}
+                      {statement && <StatementFilePreview key={statement.fileId} document={statement}
+                        pdf={statement.sheets?.includes("PDF") ? { bytes: fileBytes.current.get(statement.fileId!)!, options: { assets: ctx.assets, ...fileOptions.current.get(statement.fileId!) } } : undefined}
+                      />}
                     </>
                   )}
                   <p className="text-muted-foreground text-sm">
@@ -1285,6 +1336,12 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 </ImportResultSummary>
               )}
               <StatementReconciliation documents={documents} preview={preview} />
+              <StatementAssociations preview={preview} activities={activities} disabled={busy || !loaded}
+                onCancelPreview={(entry, peerKey) => setDecisions((current) => ({ ...current,
+                  [rowKey(entry.row)]: { ...current[rowKey(entry.row)], cancelledAssociations: [...new Set([...(current[rowKey(entry.row)]?.cancelledAssociations ?? []), peerKey])] },
+                }))}
+                onCancelSaved={(id) => void cancelAssociation(id)}
+              />
               <p className="text-muted-foreground mt-3 text-xs">
                 {"重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。"}
               </p>
@@ -1309,6 +1366,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               setDocuments((current) => current.filter((doc) => doc.fileId !== removeId));
               if (statement?.fileId === removeId) setStatement(null);
               fileBytes.current.delete(removeId);
+              fileOptions.current.delete(removeId);
+              setPassword("");
               setRemoveId(null);
               setConfirmOpen(false);
             } else cancel();

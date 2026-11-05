@@ -4,6 +4,7 @@ dist/
 *.tsbuildinfo
 .pnpm-debug.log*
 e2e/test-results/
+/docs/demo/
 
 .env
 .env.local

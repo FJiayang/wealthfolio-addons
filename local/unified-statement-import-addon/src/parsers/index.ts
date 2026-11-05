@@ -27,6 +27,9 @@ export function parseStatementSync(bytes: Uint8Array, fileName: string): Stateme
 }
 
 export interface ParseOptions {
+  password?: string;
+  currency?: string;
+  assets?: import("./pdf").PdfOptions["assets"];
   channel?: string;
   variantId?: string;
   sourceAccount?: string;
@@ -38,9 +41,16 @@ export async function parseStatement(
   fileName: string,
   options: ParseOptions = {},
 ): Promise<StatementDocument> {
-  const rawPreview = readTables(bytes, (cells) =>
-    statementParsers.some((parser) => parser.matches(cells)),
-  );
+  const isPdf = new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+  const rawPreview = isPdf
+    ? await (await import("./pdf")).readPdfTables(bytes, options)
+    : readTables(bytes, (cells) => statementParsers.some((parser) => parser.matches(cells)));
+  if (options.channel === "td") {
+    for (const sheet of rawPreview) {
+      if (!sheet.records.some(({ cells }) => getStatementParser("td").matches(cells)))
+        sheet.records.unshift({ lineNumber: 0, cells: ["Date", "Transaction Description", "Withdrawals", "Deposits", "Balance"] });
+    }
+  }
   const fileId = options.fileId ?? crypto.randomUUID();
   const rows: StatementDocument["rows"] = [];
   const channels = new Set<string>();
@@ -60,8 +70,12 @@ export async function parseStatement(
     }
     if (matches.length !== 1) throw new Error("账单同时匹配多个渠道，请选择流水渠道后重试。");
     const parser = matches[0];
+    const currencyColumns = profiles.filter((profile) => profile.channel === parser.id).flatMap((profile) => profile.columns.currency ?? []);
+    const headers = sheet.records.find(({ cells }) => parser.matches(cells))?.cells;
+    if (["bmo", "td"].includes(parser.id) && !options.currency && !headers?.some((cell) => currencyColumns.includes(cell.normalize("NFKC").trim())))
+      throw new Error("账单缺少币种，请在上传页明确选择后重新读取。");
     channels.add(parser.id);
-    for (const row of parser.parse(sheet.records, fileName, options.variantId)) {
+    for (const row of parser.parse(sheet.records, fileName, options.variantId, options.currency)) {
       const source = row.source;
       const rawError = sheet.records.find(
         (record) => record.lineNumber === source.lineNumber,
@@ -92,7 +106,7 @@ export async function parseStatement(
             source.amount &&
             (source.balance ||
               source.system === "feidee" ||
-              (profiles.some((p) => p.id === source.variantId && p.credit) && source.description))
+              ((profiles.some((p) => p.id === source.variantId && p.credit) || source.system === "bmo") && source.description))
           ) {
             const identity = JSON.stringify([
               source.date,

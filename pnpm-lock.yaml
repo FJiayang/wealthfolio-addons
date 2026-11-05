@@ -80,6 +80,10 @@ importers:
         version: 3.2.7(@types/node@20.19.41)(happy-dom@20.14.0)(jiti@2.7.0)(lightningcss@1.32.0)
 
   local/unified-statement-import-addon:
+    dependencies:
+      pdfjs-dist:
+        specifier: 5.4.296
+        version: 5.4.296
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.1.18
@@ -114,6 +118,9 @@ importers:
       happy-dom:
         specifier: ^20.14.0
         version: 20.14.0
+      motion:
+        specifier: link:../../../wealthfolio/apps/frontend/node_modules/motion
+        version: link:../../../wealthfolio/apps/frontend/node_modules/motion
       react:
         specifier: link:../../../wealthfolio/apps/frontend/node_modules/react
         version: link:../../../wealthfolio/apps/frontend/node_modules/react

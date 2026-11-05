@@ -1,8 +1,8 @@
 {
   "name": "unified-statement-import-addon",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "dist/addon.js",
   "scripts": {
@@ -12,7 +12,11 @@
     "test": "vitest run --exclude '**/package.test.ts'",
     "test:package": "vitest run src/package.test.ts",
     "test:browser": "node scripts/verify-browser.mjs",
+    "test:demo": "STATEMENT_DEMO_TESTS=1 vitest run src/demo.test.ts",
     "bundle": "pnpm build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.4.296"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -26,6 +30,7 @@
     "@wealthfolio/ui": "link:../../../wealthfolio/packages/ui",
     "fflate": "^0.8.2",
     "happy-dom": "^20.14.0",
+    "motion": "link:../../../wealthfolio/apps/frontend/node_modules/motion",
     "react": "link:../../../wealthfolio/apps/frontend/node_modules/react",
     "react-dom": "link:../../../wealthfolio/apps/frontend/node_modules/react-dom",
     "tailwindcss": "^4.1.18",
