@@ -5,6 +5,7 @@ import type {
 } from "@wealthfolio/addon-sdk";
 import type { StatementRow } from "../parsers/types";
 import type { ImportRule } from "./rules";
+import type { ImportOptions } from "./investments";
 import {
   buildPreview,
   previewSignature,
@@ -38,6 +39,7 @@ export function createSubmitter(host: ImportHost) {
     decisions: Decisions,
     reviewed: PreviewRow[],
     rules: ImportRule[] = [],
+    options: ImportOptions = {},
   ): Promise<Submission> => {
     if (busy) throw new Error("正在提交，请勿重复操作。");
     busy = true;
@@ -46,7 +48,7 @@ export function createSubmitter(host: ImportHost) {
         host.accounts.getAll(),
         host.activities.getAll(),
       ]);
-      const preview = buildPreview(rows, accounts, activities, mappings, decisions, rules);
+      const preview = buildPreview(rows, accounts, activities, mappings, decisions, rules, options);
       if (previewSignature(preview) !== previewSignature(reviewed))
         return {
           outcome: "changed",
@@ -79,6 +81,7 @@ export function createSubmitter(host: ImportHost) {
           mappings,
           decisions,
           rules,
+          options,
         );
         return {
           outcome: "uncertain",
@@ -95,6 +98,7 @@ export function createSubmitter(host: ImportHost) {
         mappings,
         decisions,
         rules,
+        options,
       );
       if (response.errors.length || response.created.length !== creates.length || response.updated.length !== updates.length)
         return {

@@ -71,7 +71,12 @@ function context(saved = JSON.stringify({ 账户余额: "cash" }), accounts: Acc
     router: { setLeaveGuard: vi.fn(async () => {}) },
     api: {
       accounts: { getAll: vi.fn(async () => accounts) },
-      activities: { getAll: vi.fn(async () => [...stored]), saveMany },
+      activities: { getAll: vi.fn(async () => [...stored]), saveMany,
+        checkImport: vi.fn(async (rows: import("@wealthfolio/addon-sdk").ActivityImport[]) => rows.map((row) => ({
+          ...row, isValid: true, quoteMode: "MANUAL", assetId: "synthetic-fund-asset",
+        }))),
+      },
+      market: { searchTicker: vi.fn(async () => []) },
       navigation: { navigate: vi.fn(async () => {}) },
       toast: { success: vi.fn() },
       storage,
@@ -117,6 +122,33 @@ async function chooseKind(direction: string, kind: string) {
 }
 
 describe("shared statement wizard", () => {
+  it("默认关闭投资识别，不调用资产接口；开启后在同一向导校验和保存基金", async () => {
+    const { ctx, saveMany } = context("", [account(), account("fund", "SECURITIES")]);
+    await renderPage(ctx);
+    expect(ctx.api.activities.checkImport).not.toHaveBeenCalled();
+    expect(ctx.api.market.searchTicker).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLElement>('[role="checkbox"]')!.click());
+    expect(container.querySelector('[role="checkbox"]')?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("蚂蚁基金"))!.click());
+    const file = new File(["date,symbol,quantity,activityType,unitPrice,currency,fee,amount,account,comment\n2026-01-03,000032,10,BUY,9.9,CNY,1,100,fund,合成基金；用户买入；订单号：202601010001"], "synthetic-fund.csv");
+    const input = container.querySelector('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await click("补齐映射");
+    await click("保存映射并预览");
+    expect(container.textContent).toContain("识别并核对基金资产");
+    await click("识别并校验基金资产");
+    expect(ctx.api.activities.checkImport).toHaveBeenCalledOnce();
+    await click("提交确认");
+    await click("提交确认");
+    await click("导入 1 笔");
+    expect(saveMany.mock.calls[0][0].creates?.[0]).toMatchObject({
+      accountId: "fund", activityType: "BUY", amount: "100", quantity: "10", fee: "1",
+      asset: { id: "synthetic-fund-asset" },
+    });
+    expect(ctx.api.navigation.navigate).not.toHaveBeenCalled();
+  });
   it.each(["ltr", "rtl"])("%s 同类未知性质只选择一次，空值单独分组且显示全部流水", async (direction) => {
     document.documentElement.dir = direction;
     const { ctx, stored } = context();

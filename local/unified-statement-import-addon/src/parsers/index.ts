@@ -1,11 +1,12 @@
 import { alipayParser } from "./alipay";
+import { antFundParser, parseAntFundPdf } from "./ant-fund";
 import { readTables } from "./reader";
 import { channelParsers, profiles } from "./profiles";
 import { add, cleanAmount, compare } from "./decimal";
 import { decodeStatement, parseCsv } from "./csv";
 import type { StatementParser, StatementDocument } from "./types";
 
-export const statementParsers: readonly StatementParser[] = [alipayParser, ...channelParsers];
+export const statementParsers: readonly StatementParser[] = [alipayParser, antFundParser, ...channelParsers];
 
 export function getStatementParser(id: string): StatementParser {
   const parser = statementParsers.find((candidate) => candidate.id === id);
@@ -42,6 +43,8 @@ export async function parseStatement(
   options: ParseOptions = {},
 ): Promise<StatementDocument> {
   const isPdf = new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+  if (isPdf && options.channel === "ant-fund")
+    return parseAntFundPdf(bytes, fileName, { ...options, fileId: options.fileId ?? crypto.randomUUID() });
   const rawPreview = isPdf
     ? await (await import("./pdf")).readPdfTables(bytes, options)
     : readTables(bytes, (cells) => statementParsers.some((parser) => parser.matches(cells)));

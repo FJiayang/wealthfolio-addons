@@ -2,7 +2,7 @@ import type { ActivityCreate, ActivityUpdate } from "@wealthfolio/addon-sdk";
 import { profiles } from "../parsers/profiles";
 import { compare, decimal } from "../parsers/decimal";
 import type { StatementSource } from "../parsers/types";
-import { METADATA_KEY, readSources, rowKey, sourceKey, type Decisions, type ExistingActivity, type PreviewRow } from "./ledger";
+import { METADATA_KEY, activityDate, readSources, rowKey, sourceKey, type Decisions, type ExistingActivity, type PreviewRow } from "./ledger";
 
 export interface Association {
   peerSourceKey: string;
@@ -39,10 +39,10 @@ function metadata(activity: Pick<ExistingActivity, "metadata">): ImportMetadata 
 }
 
 function update(activity: ExistingActivity, value: ImportMetadata, amount = String(activity.amount)): ActivityUpdate {
-  if (!activity.accountId || !activity.activityType || !activity.activityDate || !activity.currency)
+  if (!activity.accountId || !activity.activityType || !activityDate(activity) || !activity.currency)
     throw new Error("已有账目缺少更新所需的账户、日期或币种，请刷新核对。");
   return { id: activity.id, accountId: activity.accountId, activityType: activity.activityType,
-    activityDate: activity.activityDate, currency: activity.currency, amount,
+    activityDate: activityDate(activity), currency: activity.currency, amount,
     metadata: { [METADATA_KEY]: value } };
 }
 
@@ -52,7 +52,7 @@ function unchanged(activity: ExistingActivity, source: StatementSource, value: I
     (activity.activityTypeOverride ?? activity.activityType) === "WITHDRAWAL" &&
     activity.currency === source.currency && activity.amount != null &&
     compare(String(activity.amount), value.booking.amount) === 0 &&
-    new Date(activity.activityDate ?? "").getTime() === new Date(source.date).getTime();
+    new Date(activityDate(activity)).getTime() === new Date(source.date).getTime();
 }
 
 function eligible(node: Node) {

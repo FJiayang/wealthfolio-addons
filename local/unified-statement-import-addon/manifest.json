@@ -1,7 +1,7 @@
 {
   "id": "unified-statement-import-addon",
   "name": "账单导入",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "本地解析支付平台与银行表格及 PDF，核对来源、自动关联消费、拆分手续费并关联真实转账。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",
@@ -15,6 +15,15 @@
       }
     ],
     "links": {
+      "investment-import": [
+        {
+          "id": "statement-investment-import",
+          "route": "statement-import",
+          "label": "账单导入",
+          "icon": "receipt",
+          "order": 230
+        }
+      ],
       "spending-import": [
         {
           "id": "statement-import",
@@ -40,8 +49,13 @@
     },
     {
       "category": "activities",
-      "functions": ["getAll", "saveMany", "getTransferPair", "linkTransfer"],
+      "functions": ["getAll", "saveMany", "getTransferPair", "linkTransfer", "checkImport"],
       "purpose": "读取来源检测重复，保存审核后的流水，并更新或取消银行与三方消费关联及对应记账金额。"
+    },
+    {
+      "category": "market",
+      "functions": ["searchTicker"],
+      "purpose": "通过宿主已有行情源识别并人工选择基金资产。"
     }
   ]
 }

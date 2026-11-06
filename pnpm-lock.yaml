@@ -15,7 +15,8 @@ importers:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
 
-  local/ant-fund-pdf-import-addon:
+
+  local/unified-statement-import-addon:
     dependencies:
       decimal.js:
         specifier: 10.6.0
@@ -23,64 +24,6 @@ importers:
       pdf-parse:
         specifier: 2.4.5
         version: 2.4.5
-      pdfjs-dist:
-        specifier: 5.4.296
-        version: 5.4.296
-    devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.1.18
-        version: 4.3.0(vite@7.3.3(@types/node@20.19.41)(jiti@2.7.0)(lightningcss@1.32.0))
-      '@types/node':
-        specifier: ^20.19.33
-        version: 20.19.41
-      '@types/react':
-        specifier: ^19.2.13
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.14)
-      '@vitejs/plugin-react':
-        specifier: ^5.1.4
-        version: 5.2.0(vite@7.3.3(@types/node@20.19.41)(jiti@2.7.0)(lightningcss@1.32.0))
-      '@wealthfolio/addon-dev-tools':
-        specifier: 3.11.0
-        version: 3.11.0
-      '@wealthfolio/addon-sdk':
-        specifier: link:../../../wealthfolio/packages/addon-sdk
-        version: link:../../../wealthfolio/packages/addon-sdk
-      '@wealthfolio/import-wizard-ui':
-        specifier: workspace:*
-        version: link:../../packages/import-wizard-ui
-      '@wealthfolio/ui':
-        specifier: link:../../../wealthfolio/packages/ui
-        version: link:../../../wealthfolio/packages/ui
-      fflate:
-        specifier: ^0.8.2
-        version: 0.8.3
-      happy-dom:
-        specifier: ^20.14.0
-        version: 20.14.0
-      react:
-        specifier: link:../../../wealthfolio/apps/frontend/node_modules/react
-        version: link:../../../wealthfolio/apps/frontend/node_modules/react
-      react-dom:
-        specifier: link:../../../wealthfolio/apps/frontend/node_modules/react-dom
-        version: link:../../../wealthfolio/apps/frontend/node_modules/react-dom
-      tailwindcss:
-        specifier: ^4.1.18
-        version: 4.3.0
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vite:
-        specifier: ^7.3.2
-        version: 7.3.3(@types/node@20.19.41)(jiti@2.7.0)(lightningcss@1.32.0)
-      vitest:
-        specifier: ^3.2.7
-        version: 3.2.7(@types/node@20.19.41)(happy-dom@20.14.0)(jiti@2.7.0)(lightningcss@1.32.0)
-
-  local/unified-statement-import-addon:
-    dependencies:
       pdfjs-dist:
         specifier: 5.4.296
         version: 5.4.296

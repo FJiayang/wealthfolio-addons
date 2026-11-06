@@ -1,5 +1,5 @@
 import type { Activity, InternalTransferPairResponse } from "@wealthfolio/addon-sdk";
-import { readSources, sourceKey, type ExistingActivity } from "./ledger";
+import { activityDate, readSources, sourceKey, type ExistingActivity } from "./ledger";
 
 export interface TransferHost {
   getTransferPair(id: string): Promise<InternalTransferPairResponse | null>;
@@ -61,7 +61,7 @@ export function transferEntries(activities: ExistingActivity[]) {
             amount: activity.amount ?? booking.amount ?? source.amount,
             source: {
               ...source,
-              date: activity.activityDate ?? source.date,
+              date: activityDate(activity) || source.date,
               currency: activity.currency ?? source.currency,
             },
             sourceKey: sourceKey(source),

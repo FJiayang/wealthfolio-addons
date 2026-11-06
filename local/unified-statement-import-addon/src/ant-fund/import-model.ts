@@ -10,6 +10,9 @@ export interface DraftLeg {
   amount: string;
   quantity: string;
   fee: string;
+  tax?: string;
+  unitPrice?: string;
+  subtype?: string;
 }
 export interface DraftRow {
   source: StatementRow;
@@ -78,14 +81,21 @@ export function unitPrice(leg: DraftLeg) {
     quantity = decimal(leg.quantity),
     fee = decimal(leg.fee);
   if (!amount.gt(0) || !quantity.gt(0)) throw new StatementError("amount");
+  const charges = fee.plus(decimal(leg.tax ?? "0"));
   const gross =
     leg.activityType === "BUY"
-      ? amount.minus(fee)
+      ? amount.minus(charges)
       : leg.activityType === "SELL"
-        ? amount.plus(fee)
+        ? amount.plus(charges)
         : amount;
-  if (!gross.gt(0) || (leg.activityType === "DIVIDEND" && !fee.isZero()))
+  if (!gross.gt(0) || (leg.activityType === "DIVIDEND" && !charges.isZero()))
     throw new StatementError("amount");
+  if (leg.unitPrice) {
+    const price = decimal(leg.unitPrice);
+    if (!price.gt(0) || !price.mul(quantity).minus(gross).abs().lte("0.01"))
+      throw new StatementError("amount");
+    return price.toString();
+  }
   return gross.div(quantity).toDecimalPlaces(12).toString();
 }
 
@@ -126,8 +136,9 @@ export function toImportRequest(
             amount: leg?.amount,
             quantity: leg?.quantity,
             fee: leg?.fee,
+            tax: leg?.tax,
             unitPrice: price,
-            subtype: leg?.activityType === "DIVIDEND" ? "DRIP" : undefined,
+            subtype: leg?.subtype ?? (leg?.activityType === "DIVIDEND" ? "DRIP" : undefined),
             instrumentType: "EQUITY",
             isDraft: true,
             isValid: false,

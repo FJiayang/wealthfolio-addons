@@ -7,6 +7,8 @@ const manifest = JSON.parse(await readFile(new URL("manifest.json", root), "utf8
 const entries = {};
 entries["licenses/sheetjs-LICENSE.txt"] = new Uint8Array(await readFile(new URL("node_modules/xlsx/LICENSE", root)));
 entries["licenses/motion-LICENSE.txt"] = new Uint8Array(await readFile(new URL("node_modules/motion/LICENSE.md", root)));
+entries["licenses/pdf-parse-LICENSE.txt"] = new Uint8Array(await readFile(new URL("node_modules/pdf-parse/LICENSE", root)));
+entries["licenses/decimal-LICENSE.txt"] = new Uint8Array(await readFile(new URL("node_modules/decimal.js/LICENCE.md", root)));
 for (const name of ["manifest.json", "README.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "licenses/original-plugin-MIT.txt"])
   entries[name] = new Uint8Array(await readFile(new URL(name, root)));
 async function collect(directory) {

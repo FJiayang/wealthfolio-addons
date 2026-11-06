@@ -1,5 +1,5 @@
 import { Icons } from "@wealthfolio/ui";
-import type { EntryKind } from "../parsers/types";
+import type { EntryKind, StatementSource } from "../parsers/types";
 import type { PreviewStatus } from "../import/ledger";
 export const labels: Record<PreviewStatus, string> = {
   ready: "待导入",
@@ -21,4 +21,8 @@ export const kinds: Record<EntryKind, string> = {
   refund: "支出退款",
   transferIn: "转入",
   transferOut: "转出",
+  investment: "基金交易",
 };
+export const statementReference = (source: StatementSource): string => source.compositeIdentity
+  ? `${source.fileName} · 第 ${source.lineNumber} 行`
+  : source.recordId;

@@ -57,13 +57,26 @@ import { WizardStepIndicator } from "../components/step-indicator";
 import { StepNavigation } from "../components/step-navigation";
 import { StatementAssociations } from "./statement-associations";
 import { cancelSavedAssociation } from "../import/associations";
-type ImportStep = "upload" | "mapping" | "preview" | "confirm" | "result";
+import { StatementInvestmentReview, StatementInvestmentFunding, StatementSavedInvestments } from "./statement-investments";
+type ImportStep = "upload" | "mapping" | "assets" | "preview" | "confirm" | "result";
 
 const accountTypes: Record<Account["accountType"], string> = {
   CASH: "现金",
   CREDIT_CARD: "信用卡",
   SECURITIES: "证券",
   CRYPTOCURRENCY: "加密货币",
+};
+// Activity chips follow the host import confirm-step.tsx.
+const activityTypeDisplay = {
+  BUY: { label: "基金申购", icon: Icons.TrendingUp, color: "text-green-600 dark:text-green-400" },
+  SELL: { label: "基金赎回", icon: Icons.TrendingDown, color: "text-red-500 dark:text-red-400" },
+  DIVIDEND: { label: "分红再投资", icon: Icons.DollarSign, color: "text-emerald-600 dark:text-emerald-400" },
+  DEPOSIT: { label: "收入", icon: Icons.ArrowDownLeft, color: "text-blue-600 dark:text-blue-400" },
+  WITHDRAWAL: { label: "支出", icon: Icons.ArrowUpRight, color: "text-orange-600 dark:text-orange-400" },
+  CREDIT: { label: "支出退款", icon: Icons.RefreshCw, color: "text-emerald-600 dark:text-emerald-400" },
+  TRANSFER_IN: { label: "转入", icon: Icons.ArrowDownLeft, color: "text-blue-600 dark:text-blue-400" },
+  TRANSFER_OUT: { label: "转出", icon: Icons.ArrowUpRight, color: "text-orange-600 dark:text-orange-400" },
+  FEE: { label: "手续费", icon: Icons.Receipt, color: "text-slate-600 dark:text-slate-400" },
 };
 
 function Choice({
@@ -155,6 +168,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     [mappings, mappingChoices],
   );
   const [decisions, setDecisions] = useState<Decisions>({});
+  const [recognizeInvestments, setRecognizeInvestments] = useState(false);
+  const importOptions = useMemo(() => ({ recognizeInvestments }), [recognizeInvestments]);
+  const hasInvestments = recognizeInvestments && rows.some((row) => row.source.investment);
   const [step, setStep] = useState<ImportStep>("upload");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -204,7 +220,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const evaluated = useMemo(() => {
     try {
       return {
-        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions, rules),
+        preview: buildPreview(rows, accounts, activities, effectiveMappings, decisions, rules, importOptions),
         error: "",
       };
     } catch (cause) {
@@ -213,7 +229,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
         error: cause instanceof Error ? cause.message : "来源信息无法读取。",
       };
     }
-  }, [rows, accounts, activities, effectiveMappings, decisions, rules]);
+  }, [rows, accounts, activities, effectiveMappings, decisions, rules, importOptions]);
   const preview = evaluated.preview;
   const counts = Object.fromEntries(
     Object.keys(labels).map((status) => [
@@ -271,6 +287,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     ),
   );
   const blockedCount = (counts.review ?? 0) + (counts.error ?? 0);
+  const pendingFunds = preview.some((entry) => entry.row.source.investment && ["review", "error"].includes(entry.status));
+  const activityCounts = new Map<string, number>();
+  for (const entry of preview.filter((entry) => entry.status === "ready"))
+    for (const create of entry.creates ?? (entry.create ? [entry.create] : []))
+      activityCounts.set(create.activityType, (activityCounts.get(create.activityType) ?? 0) + 1);
   const unresolvedKinds = preview.filter(
     (entry) => entry.status !== "excluded" && entry.status !== "duplicate" && !entry.kind,
   );
@@ -386,6 +407,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setMessage("");
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      if (format === "ant-fund" && !recognizeInvestments) throw new Error("请先开启识别投资交易流水");
       const parsed = await parseStatement(bytes, file.name, {
         channel: format || undefined,
         variantId: variantId || undefined,
@@ -456,7 +478,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
             .map(([method]) => [method, ""]),
         ),
       );
-      setStep("preview");
+      setStep(hasInvestments ? "assets" : "preview");
       setMessage("");
     } catch {
       setError("账户映射保存失败，请重试。");
@@ -465,14 +487,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     }
   }
 
-  async function viewSpending(notify = false) {
+  async function viewSpending(notify = false, investment = false) {
     setNavigationError("");
     try {
       await ctx.router.setLeaveGuard(false);
       if (notify) ctx.api.toast.success("导入成功，分类由系统后台处理");
-      await ctx.api.navigation.navigate("/activities?tab=spending");
+      await ctx.api.navigation.navigate(investment ? "/activities?tab=investments" : "/activities?tab=spending");
     } catch {
-      setNavigationError("无法打开收支页，请点击“查看收支”重试。已保存的账目不会再次提交。");
+      setNavigationError(investment ? "无法打开投资页，请点击“查看投资”重试。已保存的账目不会再次提交。" : "无法打开收支页，请点击“查看收支”重试。已保存的账目不会再次提交。");
     }
   }
 
@@ -483,7 +505,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setError("");
     setMessage("");
     try {
-      const result = await submitter(rows, effectiveMappings, decisions, preview, rules);
+      const result = await submitter(rows, effectiveMappings, decisions, preview, rules, importOptions);
       setSubmission(result);
       setMessage(result.message);
       const [currentAccounts, currentActivities] = await Promise.all([
@@ -496,6 +518,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       if (
         result.outcome === "success" &&
         !preview.some((entry) => entry.association) &&
+        !preview.some((entry) => entry.kind === "investment") &&
         !preview.some((entry) => entry.kind === "transferIn" || entry.kind === "transferOut")
       )
         await viewSpending(true);
@@ -589,6 +612,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     setStatement(null);
     setMappingChoices({});
     setDecisions({});
+    setRecognizeInvestments(false);
     setStep("upload");
     setError("");
     setMessage("");
@@ -600,7 +624,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
 
   const locked = useCallback(
     (entry: PreviewRow) =>
-      busy || !!entry.association || entry.status === "excluded" || entry.status === "duplicate" || !!entry.row.error,
+      busy || !!entry.association || !!entry.row.source.investment || entry.status === "excluded" || entry.status === "duplicate" || !!entry.row.error,
     [busy],
   );
   const gridRows = useMemo(
@@ -619,6 +643,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   const steps = [
     { id: "upload", label: "上传" },
     { id: "mapping", label: "映射" },
+    ...(hasInvestments ? [{ id: "assets", label: "识别资产" }] : []),
     { id: "preview", label: "审核交易" },
     { id: "confirm", label: "导入" },
   ];
@@ -633,12 +658,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   });
   function back() {
     if (step === "confirm") setStep("preview");
-    else if (step === "preview") setStep("mapping");
+    else if (step === "preview") setStep(hasInvestments ? "assets" : "mapping");
+    else if (step === "assets") setStep("mapping");
     else setStep("upload");
   }
   function next() {
     if (step === "upload") setStep("mapping");
     else if (step === "mapping") void saveMappings();
+    else if (step === "assets") setStep("preview");
     else if (step === "preview" && !blockedCount) setStep("confirm");
     else if (step === "confirm") void submit();
   }
@@ -679,7 +706,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       (step !== "upload" || rows.length > 0) &&
                       !evaluated.error &&
                       (step === "upload" ||
-                        (step === "mapping"
+                        (step === "assets" ? !pendingFunds : step === "mapping"
                           ? !unresolvedMethods.length && !unresolvedKinds.length
                           : !!counts.ready && !blockedCount))
                     }
@@ -714,8 +741,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   {message}
                 </AlertFeedback>
               )}
+              {recognizeInvestments && <StatementSavedInvestments ctx={ctx} activities={activities} busy={busy} onRefresh={refresh} />}
               {step === "upload" && (
                 <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Checkbox aria-label="识别投资交易流水" checked={recognizeInvestments} disabled={busy || documents.length > 0}
+                      onCheckedChange={(checked) => setRecognizeInvestments(checked === true)} />
+                    识别投资交易流水
+                  </div>
                   <Input
                     aria-label="来源账户标识"
                     placeholder="银行账单缺少账号时，填写稳定的来源账户标识；不要使用文件名"
@@ -727,7 +760,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     label="流水格式"
                     value={format}
                     disabled={busy}
-                    options={statementParsers.map((candidate) => ({
+                    options={statementParsers.filter((candidate) => recognizeInvestments || candidate.id !== "ant-fund").map((candidate) => ({
                       value: candidate.id,
                       label: `${candidate.displayName} ${candidate.formats.map((format) => format.toUpperCase()).join(" / ")}`,
                     }))}
@@ -878,6 +911,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
+                  {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
+                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} />}
                   <RulesEditor
                     rules={rules}
                     rows={rows}
@@ -993,7 +1028,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                               label={`性质映射：${label}`}
                               value=""
                               disabled={busy}
-                              options={Object.entries(kinds).map(([value, label]) => ({
+                              options={Object.entries(kinds).filter(([value]) => value !== "investment").map(([value, label]) => ({
                                 value,
                                 label,
                               }))}
@@ -1131,8 +1166,12 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   </Button>
                 </div>
               )}
+              {step === "assets" && <StatementInvestmentReview ctx={ctx} preview={preview} decisions={decisions}
+                accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} onWorkingChange={setBusy} />}
               {(step === "preview" || step === "confirm") && (
                 <div className="space-y-4">
+                  {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
+                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} />}
                   {preview
                     .filter(
                       (entry) =>
@@ -1160,7 +1199,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     }
                   >
                     {blockedCount
-                      ? "黄色单元格需要核实，红色单元格需要修正。双击“记账性质”“确认金额”或“目标账户”即可编辑，也可选中单元格后按 F2 或 Enter。核实实际扣款金额、性质和账户后，勾选行首复选框，在顶部点击“标记已核对”。现金转账须确认方向和账户，基金证券交易请使用投资插件；格式错误不能通过核对放行。"
+                      ? "黄色单元格需要核实，红色单元格需要修正。双击“记账性质”“确认金额”或“目标账户”即可编辑，也可选中单元格后按 F2 或 Enter。核实后勾选行首复选框，在顶部点击“标记已核对”。现金转账须确认方向和账户；基金明细在资产识别步骤修正。格式错误不能通过核对放行。"
                       : "您的数据已准备好导入，仍可审核并调整。已跳过及重复记录不会提交。"}
                   </AlertFeedback>
                   {step === "preview" && (
@@ -1212,6 +1251,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                             [entry.id]: { ...decisions[entry.id], confirmed: true },
                           },
                           rules,
+                          importOptions,
                         ).find((candidate) => rowKey(candidate.row) === entry.id)?.status ===
                           "ready"
                       }
@@ -1272,19 +1312,20 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       还有 {n(blockedCount)} 笔错误或待核对记录，请修改、核对或跳过。
                     </AlertFeedback>
                   )}
-                  {step === "confirm" && (
-                    <div className="flex flex-wrap gap-3">
-                      {Object.entries(kinds).map(([kind, label]) => (
-                        <span key={kind}>
-                          {label}：
-                          {n(
-                            preview.filter(
-                              (entry) => entry.status === "ready" && entry.kind === kind,
-                            ).length,
-                          )}{" "}
-                          笔
-                        </span>
-                      ))}
+                  {step === "confirm" && activityCounts.size > 0 && (
+                    <div className="space-y-3" aria-label="按活动类型统计">
+                      <h4 className="text-muted-foreground text-xs font-medium tracking-wider">按活动类型</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {[...activityCounts].sort((a, b) => b[1] - a[1]).map(([type, count]) => {
+                          const config = activityTypeDisplay[type as keyof typeof activityTypeDisplay];
+                          const Icon = config.icon;
+                          return <div key={type} className="bg-muted/50 flex items-center gap-2 rounded-full px-3 py-1.5">
+                            <Icon className={`size-4 ${config.color}`} />
+                            <span className="text-sm">{config.label}</span>
+                            <span className="bg-background text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium tabular-nums">{n(count)}</span>
+                          </div>;
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1320,8 +1361,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     },
                   ]}
                 >
-                  <Button disabled={busy} onClick={() => void viewSpending()}>
-                    查看收支
+                  <Button disabled={busy} onClick={() => void viewSpending(false, hasInvestments)}>
+                    {hasInvestments ? "查看投资" : "查看收支"}
                   </Button>
                   <Button
                     variant="outline"
@@ -1335,6 +1376,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   <Button onClick={cancel}>{"开始新导入"}</Button>
                 </ImportResultSummary>
               )}
+              <div className="mt-6 space-y-3">
               <StatementReconciliation documents={documents} preview={preview} />
               <StatementAssociations preview={preview} activities={activities} disabled={busy || !loaded}
                 onCancelPreview={(entry, peerKey) => setDecisions((current) => ({ ...current,
@@ -1342,9 +1384,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 }))}
                 onCancelSaved={(id) => void cancelAssociation(id)}
               />
-              <p className="text-muted-foreground mt-3 text-xs">
-                {"重复检测覆盖可读取的非归档账户。若相关账户已归档，请先在主程序取消归档再导入。"}
-              </p>
               <TransferPanel
                 ctx={ctx}
                 activities={activities}
@@ -1352,6 +1391,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 disabled={busy}
                 onRefresh={refresh}
               />
+              </div>
             </ImportWizardLayout>
           </div>
         </PageContent>

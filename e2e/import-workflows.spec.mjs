@@ -12,7 +12,7 @@ async function choose(frame, label, option) {
 }
 
 for (const direction of ["ltr", "rtl"]) {
-  test(`two local import workflows, preview, bulk actions and themes (${direction})`, async ({
+  test(`unified statement and fund imports, preview, bulk actions and themes (${direction})`, async ({
     page,
   }, info) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -37,7 +37,7 @@ for (const direction of ["ltr", "rtl"]) {
       ["spending/settings", { enabled: true, accountIds: [] }],
     ])
       expect((await page.request.put(`${base}/api/v1/${path}`, { headers, data })).ok()).toBe(true);
-    for (const id of ["unified-statement-import-addon", "ant-fund-pdf-import-addon"]) {
+    for (const id of ["unified-statement-import-addon"]) {
       const root = new URL(`${id}/`, local);
       const manifest = JSON.parse(readFileSync(new URL("manifest.json", root), "utf8"));
       const response = await page.request.post(`${base}/api/v1/addons/install-zip`, {
@@ -246,31 +246,28 @@ for (const direction of ["ltr", "rtl"]) {
         })
       ).ok(),
     ).toBe(true);
-    await page.goto(`${base}/addons/ant-fund-pdf-import-addon?dir=${direction}`);
-    await choose(frame, "流水格式", "蚂蚁基金交易明细 PDF");
+    await page.goto(`${base}/addons/unified-statement-import-addon?dir=${direction}`);
+    await frame.getByLabel("识别投资交易流水", { exact: true }).check();
+    await choose(frame, "流水格式", "蚂蚁基金 PDF / CSV");
     await frame
       .locator('input[type="file"]')
       .setInputFiles(
-        fileURLToPath(new URL("ant-fund-pdf-import-addon/src/fixtures/statement.pdf", local)),
+        fileURLToPath(new URL("unified-statement-import-addon/src/ant-fund/fixtures/statement.pdf", local)),
       );
     await expect(frame.getByText(/文件预览 ·/)).toBeVisible({ timeout: 30_000 });
     await frame.getByRole("tab", { name: "原始文件", exact: true }).click();
     await expect(frame.getByRole("img", { name: "PDF 第 1 页" })).toBeVisible({ timeout: 30_000 });
-    await frame.getByRole("button", { name: "下一步", exact: true }).click();
-    await choose(frame, "人民币投资账户", investmentName);
-    // All fixture rows needing manual completion are explicitly skipped in mapping.
-    const pending = frame.locator("details").filter({ hasText: /需要补齐.*笔/ });
-    for (const checkbox of await pending.getByRole("checkbox").all()) await checkbox.check();
-    if (await frame.getByRole("toolbar", { name: "映射批量操作" }).count())
-      await frame.getByRole("button", { name: "跳过", exact: true }).click();
-    await frame.getByRole("button", { name: "下一步", exact: true }).click();
+    await frame.getByRole("button", { name: "补齐映射", exact: true }).click();
+    const fundMapping = frame.getByRole("combobox", { name: /^账户映射：/ });
+    await fundMapping.click();
+    await frame.getByRole("option", { name: `${investmentName} · 证券 · CNY`, exact: true }).click();
+    await frame.getByRole("button", { name: "保存映射并预览", exact: true }).click();
     await expect(frame.getByRole("grid")).toBeVisible();
+    await expect(frame.getByRole("button", { name: "识别并校验基金资产", exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath(`fund-${direction}-light.png`) });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.screenshot({ path: info.outputPath(`fund-${direction}-dark.png`) });
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
-    await frame.getByRole("button", { name: "下一步", exact: true }).click();
-    await expect(page).toHaveURL(/\/import\?addonImport=1/);
-    await expect(page.locator("[data-import-wizard]")).toBeVisible();
+
   });
 }

@@ -207,12 +207,14 @@ export function ImportReviewTable<T>({
         />
       ),
       cell: ({ row }) => (
-        <Checkbox
-          aria-label={`选择行 ${getRowId(row.original)}`}
-          checked={row.getIsSelected()}
-          disabled={busy || !row.getCanSelect()}
-          onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
-        />
+        <div className="flex h-full items-center">
+          <Checkbox
+            aria-label={`选择行 ${getRowId(row.original)}`}
+            checked={row.getIsSelected()}
+            disabled={busy || !row.getCanSelect()}
+            onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
+          />
+        </div>
       ),
     }),
     [busy, getRowId],
@@ -236,7 +238,6 @@ export function ImportReviewTable<T>({
   );
   const grid = useDataGrid({
     data,
-    rowHeight: "medium",
     columns: reviewColumns,
     getRowId,
     dir,
