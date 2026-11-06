@@ -328,7 +328,7 @@ try {
   await bankFrame.getByRole("checkbox", { name: "已核对资金方向、最终金额及投资账户", exact: true }).check();
   await captureReview(bankPage, "07-funding-mapping");
   await bankFrame.getByRole("button", { name: "保存映射并预览", exact: true }).click();
-  await expect(bankFrame.getByText(/已关联投资资金与买卖/).first()).toBeVisible();
+  await expect(bankFrame.getByText("已关联投资资金与买卖", { exact: true })).toBeVisible();
   const layout = await bankFrame.locator('[data-slot="grid-row"]').first().evaluate((row) => {
     const rowRect = row.getBoundingClientRect();
     const centers = ["line", "kind", "amount", "accountId", "processing", "source-date", "source-merchant"].map((column) => {
@@ -387,8 +387,60 @@ try {
   await expect(bankFrame.getByRole("button", { name: "确认关联已保存投资交易", exact: true })).toBeVisible();
   assert.equal((await command("/activities/search", { page: 0, pageSize: 1000, filters: {}, searchKeyword: "" })).data.length, 8);
   await bankPage.close();
+
+  const mappingPage = await context.newPage();
+  await mappingPage.setViewportSize({ width: 1440, height: 1100 });
+  await mappingPage.goto(`${origin}/addons/${manifest.id}`);
+  const mappingFrame = mappingPage.frameLocator("iframe");
+  await mappingFrame.getByRole("checkbox", { name: "识别投资交易流水", exact: true }).check();
+  await mappingFrame.getByRole("combobox", { name: "流水格式", exact: true }).click();
+  await mappingFrame.getByRole("option", { name: /招商银行/ }).click();
+  for (const [index, rows] of [
+    [
+      ["2026-02-01", "人民币", "-100.00", "900.00", "申购", "蚂蚁基金销售有限公司", ""],
+      ["2026-02-02", "人民币", "50.00", "950.00", "赎回", "蚂蚁基金销售有限公司", ""],
+      ["2026-02-03", "人民币", "-200.00", "750.00", "申购", "合成另一基金公司", ""],
+    ],
+    [["2026-02-04", "人民币", "-300.00", "700.00", "申购", "蚂蚁基金销售有限公司", ""]],
+  ].entries()) {
+    await mappingFrame.getByRole("textbox", { name: "来源账户标识" }).fill(`synthetic-group-card-${index}`);
+    await mappingFrame.locator('input[type="file"]').setInputFiles({
+      name: `synthetic-grouped-bank-${index}.csv`, mimeType: "text/csv", buffer: csv([golden[1].header, ...rows]),
+    });
+    await expect(mappingFrame.getByRole("button", { name: new RegExp(`synthetic-grouped-bank-${index}\\.csv`) })).toBeVisible();
+  }
+  await mappingFrame.getByRole("button", { name: "补齐映射", exact: true }).click();
+  const fundingChoices = mappingFrame.getByRole("combobox", { name: "资金对应的投资账户", exact: true });
+  const fundingChecks = mappingFrame.getByRole("checkbox", { name: "已核对资金方向、最终金额及投资账户", exact: true });
+  await expect(fundingChoices).toHaveCount(2);
+  await expect(mappingFrame.getByRole("combobox", { name: /^账户映射：/, includeHidden: true })).toHaveCount(2);
+  const companyRows = mappingFrame.getByRole("table", { name: "流水明细：投资资金：蚂蚁基金销售有限公司 · CNY", exact: true });
+  await expect(companyRows.locator("tbody tr")).toHaveCount(3);
+  await expect(companyRows).toContainText("synthetic-grouped-bank-0.csv");
+  await expect(companyRows).toContainText("synthetic-grouped-bank-1.csv");
+  for (let index = 0; index < 2; index++) {
+    await fundingChoices.nth(index).click();
+    await mappingFrame.getByRole("option", { name: investmentAccount.name, exact: true }).click();
+  }
+  await captureReview(mappingPage, "16-grouped-mapping");
+  await mappingPage.setViewportSize({ width: 390, height: 1100 });
+  await captureReview(mappingPage, "17-grouped-mapping-mobile");
+  await mappingPage.setViewportSize({ width: 1440, height: 1100 });
+  await fundingChecks.first().check();
+  await expect(fundingChecks.last()).not.toBeChecked();
+  await mappingFrame.getByRole("button", { name: "保存映射并预览", exact: true }).click();
+  await expect(mappingFrame.getByRole("button", { name: "提交确认", exact: true })).toBeDisabled();
+  await fundingChecks.last().check();
+  await mappingFrame.getByRole("button", { name: "提交确认", exact: true }).click();
+  await mappingFrame.getByRole("button", { name: "导入 4 笔", exact: true }).click();
+  await expect(mappingFrame.getByText("活动已保存，转账请核对配对状态", { exact: true })).toBeVisible();
+  const groupedActivities = (await command("/activities/search", { page: 0, pageSize: 1000, filters: {}, searchKeyword: "" })).data
+    .filter((row) => row.metadata?.unifiedStatementImport?.sources.some((source) => source.fileName.startsWith("synthetic-grouped-bank-")));
+  assert.equal(groupedActivities.length, 8);
+  assert.equal(groupedActivities.filter((row) => row.accountId === investmentAccount.id).length, 4);
+  await mappingPage.close();
   console.log(
-    "PASS: isolated host, desktop/mobile, RTL, themes, duplicate import, fees, transfer pairing, fund asset validation, cross-session investment matching and cancellation",
+    "PASS: isolated host, desktop/mobile, RTL, themes, duplicate import, fees, transfer pairing, fund asset validation, cross-session investment matching and cancellation, grouped investment mapping across files",
   );
   console.log(`Screenshots: ${installation}`);
 } catch (error) {
