@@ -3,7 +3,7 @@
 本地插件，适用于 Wealthfolio
 3.12.0 及以上。支持支付宝、微信、银行及记账平台账单，不属于官方插件目录。全部解析和账目处理在本机完成，无网络权限。网页导出缺少订单号时只能预览，不能提交。
 
-## 0.4.0 支持格式
+## 0.4.1 支持格式
 
 | 渠道 | 导出结构 |
 | --- | --- |
@@ -34,7 +34,7 @@ pnpm --filter unified-statement-import-addon test:package
 ```
 
 在 Wealthfolio 插件设置中选择“从文件安装”，安装
-`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.4.0.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
+`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.4.1.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
 
 ## 使用
 
@@ -59,7 +59,7 @@ pnpm --filter unified-statement-import-addon test:package
 
 上传文件前勾选“识别投资交易流水”，本次有文件后不能切换；结束导入后恢复默认关闭。支持原蚂蚁基金 12 列文字型 PDF，以及带订单号的标准基金 CSV（date、symbol、quantity、activityType、unitPrice、currency、fee、amount、comment，tax/subtype/account 可选）。CSV 备注中的“订单号：”或“Ant Fund order:”用于稳定识别；同订单的转换双边按基金代码和买卖方向区分。其他券商格式不保证兼容。
 
-银行或支付渠道识别出投资资金用途后，须选择实际投资账户并确认方向和最终金额，生成一组银行卡/钱包与投资账户之间的内部转账。基金文件只生成投资账户内的 BUY、SELL 或分红再投资，不补造银行流水。银行卡扣款、投资账户转入、买入分别反映同一次资金使用；投资费用写在买卖活动中，不另行重复扣款。两账户币种须与原流水一致，投资账户须使用人民币交易流水跟踪。
+银行或支付渠道识别出投资资金用途后，须选择实际投资账户并确认方向和最终金额。同一基金公司、同一币种的资金流水共用一次账户配置和确认，下方展示全部关联流水；不同公司、币种分别配置。修改投资账户后整组须重新核对。每笔流水仍独立生成银行卡/钱包与投资账户之间的内部转账。基金文件只生成投资账户内的 BUY、SELL 或分红再投资，不补造银行流水。银行卡扣款、投资账户转入、买入分别反映同一次资金使用；投资费用写在买卖活动中，不另行重复扣款。两账户币种须与原流水一致，投资账户须使用人民币交易流水跟踪。
 
 有投资明细时，在账户映射后进入资产识别：沿用宿主表格单元格编辑，支持修正确认日期、代码、金额、份额、费用和净值，搜索选择资产，或明确标为手动资产后校验。净值留空时复用原基金算法计算。特殊转换可补充另一侧并修正；信息不足时必须补齐或跳过。资产识别通过宿主 checkImport/searchTicker，可能调用已启用的行情源；关闭投资识别时不会调用。
 

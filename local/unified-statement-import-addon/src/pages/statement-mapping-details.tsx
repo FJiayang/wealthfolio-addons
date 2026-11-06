@@ -26,7 +26,7 @@ export function StatementMappingDetails({
   accounts: { value: string; label: string }[];
 }) {
   const { formatAmount } = useAmountFormatting();
-  const { formatDateTime } = useDateFormatting();
+  const { formatDateTime, formatDate } = useDateFormatting();
   const { formatDecimal } = useNumberFormatting();
   const n = (value: number) => formatDecimal(value, { maximumFractionDigits: 0 });
   return (
@@ -71,7 +71,9 @@ export function StatementMappingDetails({
                   <TableCell>{n(source.lineNumber)}</TableCell>
                   <TableCell className="whitespace-nowrap">
                     {source.date
-                      ? formatDateTime(source.date, { dateStyle: "short", timeStyle: "short" })
+                      ? source.datePrecision === "date"
+                        ? formatDate(source.date)
+                        : formatDateTime(source.date, { dateStyle: "short", timeStyle: "short" })
                       : source.originalTime}
                   </TableCell>
                   <TableCell>{source.direction || "未提供收支"}</TableCell>

@@ -6,6 +6,7 @@ import type { DraftLeg } from "../ant-fund/import-model";
 import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, isInvestmentCash, legKey, linkSavedInvestment } from "../import/investments";
 import { rowKey, type Decisions, type ExistingActivity, type PreviewRow, type RowDecision } from "../import/ledger";
 import { statementReference } from "./statement-presentation";
+import { StatementMappingDetails } from "./statement-mapping-details";
 
 interface Props {
   ctx: AddonContext;
@@ -137,17 +138,35 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
   const { formatDateTime, formatDate } = useDateFormatting();
   const investmentAccounts = accounts.filter((account) => account.accountType === "SECURITIES" && account.trackingMode === "TRANSACTIONS");
   const nodes = investmentNodes(activities, preview);
+  const fundingGroups = new Map<string, PreviewRow[]>();
+  for (const entry of preview.filter((entry) => isInvestmentCash(entry.row) && !["excluded", "duplicate"].includes(entry.status))) {
+    const source = entry.row.source;
+    const key = JSON.stringify([source.merchant.normalize("NFKC").trim() || rowKey(entry.row), source.currency]);
+    const group = fundingGroups.get(key) ?? [];
+    group.push(entry);
+    fundingGroups.set(key, group);
+  }
   return <div className="space-y-4">
-    {preview.filter((entry) => isInvestmentCash(entry.row) && !["excluded", "duplicate"].includes(entry.status)).map((entry) => {
-      const key = rowKey(entry.row), decision = decisions[key] ?? {};
+    {[...fundingGroups].map(([key, entries]) => {
+      const source = entries[0].row.source;
+      const company = source.merchant || source.description;
+      const selectedAccount = decisions[rowKey(entries[0].row)]?.investmentAccountId ?? "";
+      const accountId = entries.every((entry) => (decisions[rowKey(entry.row)]?.investmentAccountId ?? "") === selectedAccount) ? selectedAccount : "";
+      const confirmed = entries.every((entry) => decisions[rowKey(entry.row)]?.confirmed);
+      const changeGroup = (patch: RowDecision) => entries.forEach((entry) => onChange(rowKey(entry.row), patch));
       return <div key={key} className="space-y-3 rounded-lg border p-4">
-        <p className="font-medium">{entry.row.source.merchant || entry.row.source.description} · {formatAmount(entry.amount, entry.row.source.currency)}</p>
-        <p className="text-muted-foreground text-sm">确认后将创建资金转账的两侧。基金交易文件稍后导入时再生成申购或赎回。</p>
-        <ImportChoice label="资金对应的投资账户" value={decision.investmentAccountId ?? ""}
-          options={investmentAccounts.filter((account) => account.id !== entry.accountId && account.currency === entry.row.source.currency).map((account) => ({ value: account.id, label: account.name }))}
-          disabled={busy} onChange={(id) => onChange(key, { investmentAccountId: id, confirmed: false, investmentPeerKey: undefined })} />
-        <div className="flex items-center gap-2 text-sm"><Checkbox aria-label="已核对资金方向、最终金额及投资账户" checked={!!decision.confirmed} disabled={busy}
-          onCheckedChange={(checked) => onChange(key, { confirmed: checked === true })} />已核对资金方向、最终金额及投资账户</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium">{company}</p>
+          <Badge variant="secondary">{entries.length} 笔 · {source.currency}</Badge>
+        </div>
+        <p className="text-muted-foreground text-sm">确认后，每笔流水分别创建资金转账的两侧。基金交易文件稍后导入时再生成申购或赎回。</p>
+        <ImportChoice label="资金对应的投资账户" value={accountId}
+          options={investmentAccounts.filter((account) => account.currency === source.currency && entries.every((entry) => account.id !== entry.accountId)).map((account) => ({ value: account.id, label: account.name }))}
+          disabled={busy} onChange={(id) => changeGroup({ investmentAccountId: id, confirmed: false, investmentPeerKey: undefined })} />
+        <StatementMappingDetails entries={entries} label={`投资资金：${company} · ${source.currency}`} open={!confirmed}
+          accounts={accounts.map((account) => ({ value: account.id, label: account.name }))} />
+        <div className="flex items-center gap-2 text-sm"><Checkbox aria-label="已核对资金方向、最终金额及投资账户" checked={confirmed} disabled={busy}
+          onCheckedChange={(checked) => changeGroup({ confirmed: checked === true })} />已核对资金方向、最终金额及投资账户</div>
       </div>;
     })}
     {preview.filter((entry) => entry.investmentLink && entry.status !== "excluded").map((entry) => {
