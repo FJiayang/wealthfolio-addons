@@ -5,6 +5,7 @@ import { getStatementParser } from "../parsers";
 import type { StatementDocument } from "../parsers/types";
 import type { PdfOptions } from "../parsers/pdf";
 import { StatementPdfPreview } from "./statement-pdf-preview";
+import { statementReference } from "./statement-presentation";
 
 export function StatementFilePreview({ document, pdf }: { document: StatementDocument; pdf?: { bytes: Uint8Array; options: PdfOptions } }) {
   const parser = getStatementParser(document.parserId);
@@ -28,8 +29,11 @@ export function StatementFilePreview({ document, pdf }: { document: StatementDoc
           <div className="isolate max-h-75 overflow-auto border-t">
             <Table><TableHeader><TableRow><TableHead>#</TableHead>{parser.previewColumns.map((column) => <TableHead key={column.field}>{column.label}</TableHead>)}</TableRow></TableHeader>
               <TableBody>{document.rows.map(({ source }, index) => <TableRow key={index}>
-                <TableCell>{source.pageNumber ? <Button variant="ghost" size="sm" onClick={() => { setPage(source.pageNumber!); setTab("original"); }}>第 {n(source.pageNumber)} 页 · 第 {n(source.pageLineNumber!)} 行</Button> : n(source.lineNumber)}</TableCell>
-                {parser.previewColumns.map((column) => <TableCell key={column.field} className="max-w-80 truncate" title={String(source[column.field] ?? "")}>{String(source[column.field] ?? "")}</TableCell>)}
+                <TableCell>{source.pageNumber ? <Button variant="ghost" size="sm" onClick={() => { setPage(source.pageNumber!); setTab("original"); }}>第 {n(source.pageNumber)} 页 · 第 {n(source.pageLineNumber ?? source.lineNumber)} 行</Button> : n(source.lineNumber)}</TableCell>
+                {parser.previewColumns.map((column) => {
+                  const value = column.field === "recordId" ? statementReference(source) : String(source[column.field] ?? "");
+                  return <TableCell key={column.field} className="max-w-80 truncate" title={value}>{value}</TableCell>;
+                })}
               </TableRow>)}</TableBody>
             </Table>
           </div>

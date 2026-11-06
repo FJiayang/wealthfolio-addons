@@ -19,7 +19,7 @@ export function ImportSelect({
       onValueChange={(value) => onChange(value === "__none__" ? "" : (value ?? ""))}
       disabled={disabled}
     >
-      <SelectTrigger aria-label={label}>
+      <SelectTrigger aria-label={label} className="w-full min-w-0">
         <SelectValue>
           {options.find((option) => option.value === value)?.label ?? "请选择"}
         </SelectValue>

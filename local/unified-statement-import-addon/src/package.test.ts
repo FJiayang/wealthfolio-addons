@@ -32,18 +32,21 @@ it("安装包只有运行文件和说明，没有源账单、测试及商店元�
     ),
   ).toBe(false);
   const manifest = JSON.parse(strFromU8(files["manifest.json"]));
-  expect(Object.keys(manifest.contributes.links)).toEqual(["spending-import"]);
+  expect(Object.keys(manifest.contributes.links)).toEqual(["investment-import", "spending-import"]);
   expect(manifest.contributes.links["spending-import"][0].route).toBe(
     manifest.contributes.routes[0].id,
   );
-  expect(manifest.version).toBe("0.3.0");
+  expect(manifest.version).toBe("0.4.0");
   expect(manifest.minWealthfolioVersion).toBe("3.12.0");
   expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.12.0");
   expect(
     manifest.permissions.find(
       (permission: { category: string }) => permission.category === "activities",
     ).functions,
-  ).toEqual(["getAll", "saveMany", "getTransferPair", "linkTransfer"]);
+  ).toEqual(["getAll", "saveMany", "getTransferPair", "linkTransfer", "checkImport"]);
+  expect(manifest.permissions.find((permission: { category: string }) => permission.category === "market").functions).toEqual(["searchTicker"]);
+  expect(files["licenses/pdf-parse-LICENSE.txt"]).toBeDefined();
+  expect(files["licenses/decimal-LICENSE.txt"]).toBeDefined();
   expect(manifest.network).toBeUndefined();
   expect(strFromU8(files["dist/addon.js"])).not.toContain("synthetic-order-001");
   const code = strFromU8(files["dist/addon.js"]);

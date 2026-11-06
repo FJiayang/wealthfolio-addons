@@ -1,4 +1,6 @@
-import type { Account, Activity, ActivityCreate, ActivityUpdate } from "@wealthfolio/addon-sdk";
+import type { Account, Activity, ActivityCreate, ActivityUpdate, AssetResolutionInput } from "@wealthfolio/addon-sdk";
+import type { DraftLeg } from "../ant-fund/import-model";
+import { addFundingCounterpart, applyInvestmentLinks, fundPreview, investmentCashKind, isInvestmentCash, type ImportOptions, type InvestmentLink } from "./investments";
 import { applyAssociations, type Association } from "./associations";
 import { normalizeAmount } from "../parsers/csv";
 import {
@@ -20,10 +22,21 @@ export type ExistingActivity = Pick<Activity, "id" | "metadata"> &
   Partial<
     Pick<
       Activity,
-      "accountId" | "activityType" | "activityTypeOverride" | "amount" | "currency" | "activityDate"
+      "accountId" | "activityType" | "activityTypeOverride" | "amount" | "currency" | "activityDate" |
+      "assetId" | "quantity" | "unitPrice" | "fee" | "tax" | "notes" | "sourceGroupId"
     >
-  >;
+  > & { assetSymbol?: string; comment?: string | null; subtype?: string | null; date?: string | Date };
+export function activityDate(activity: ExistingActivity): string {
+  return activity.activityDate ?? (activity.date instanceof Date ? activity.date.toISOString() : activity.date ?? "");
+}
 export interface RowDecision {
+  fundLegs?: DraftLeg[];
+  fundAssets?: Record<string, AssetResolutionInput>;
+  fundChecked?: string;
+  fundError?: string;
+  investmentAccountId?: string;
+  investmentPeerKey?: string;
+  noInvestmentLink?: boolean;
   cancelledAssociations?: string[];
   feeConfirmed?: boolean;
   feeAccountId?: string;
@@ -38,6 +51,7 @@ export type Decisions = Record<string, RowDecision>;
 export const rowKey = (row: StatementRow): string => row.rowId ?? String(row.source.lineNumber);
 export type PreviewStatus = "ready" | "duplicate" | "excluded" | "review" | "error";
 export interface PreviewRow {
+  investmentLink?: InvestmentLink;
   association?: Association;
   updates?: ActivityUpdate[];
   row: StatementRow;
@@ -66,7 +80,7 @@ export function sourceKey(
   source: Pick<StatementSource, "system" | "recordId" | "sourceAccount">,
 ): string {
   return JSON.stringify(
-    source.sourceAccount && !["alipay", "wechat", "jd", "mt"].includes(source.system)
+    source.sourceAccount && !["alipay", "wechat", "jd", "mt", "ant-fund"].includes(source.system)
       ? [source.system, source.sourceAccount, source.recordId]
       : [source.system, source.recordId],
   );
@@ -91,6 +105,12 @@ export function sourceFingerprint(source: StatementSource): string {
 }
 
 export function sourcesConflict(left: StatementSource, right: StatementSource): boolean {
+  if (left.investment && right.investment) {
+    const content = (source: StatementSource) => JSON.stringify(source.investment!.legs
+      .map((leg) => [leg.activityType, leg.code, leg.date, decimal(leg.amount || "0"), decimal(leg.quantity || "0"), decimal(leg.fee || "0"), decimal(leg.tax || "0")])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    return content(left) !== content(right);
+  }
   if (
     left.variantId === right.variantId ||
     (!left.variantId && right.variantId === "alipay-detail-csv") ||
@@ -163,6 +183,13 @@ export function readSources(activity: ExistingActivity): StatementSource[] {
       (source.compositeIdentity !== undefined && typeof source.compositeIdentity !== "boolean")
     )
       throw new Error("已有账目的导入来源信息不完整，已停止检测。");
+    if (source.investment !== undefined) {
+      const investment = source.investment;
+      if (!investment || typeof investment.orderId !== "string" || typeof investment.purpose !== "string" ||
+        !Array.isArray(investment.legs) || investment.legs.some((leg: Record<string, unknown>) =>
+          !leg || ["code", "date", "activityType", "amount", "quantity", "fee"].some((field) => typeof leg[field] !== "string")))
+        throw new Error("已有基金来源信息不完整，已停止检测。");
+    }
     sources.push(source as StatementSource);
   }
   return sources;
@@ -175,7 +202,13 @@ export function buildPreview(
   mappings: Mappings,
   decisions: Decisions,
   rules: ImportRule[] = [],
+  options: ImportOptions = {},
 ): PreviewRow[] {
+  rows = rows.map((row) => options.recognizeInvestments && isInvestmentCash(row) && !row.error && !row.excluded
+    ? { ...row, unsupportedReason: undefined, defaultExcluded: false, parseStatus: "ok" as const,
+      transfer: true, reviewReason: undefined,
+      kind: investmentCashKind(row) }
+    : row);
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const existing = new Map<string, { id: string; source: StatementSource; component: string }[]>();
   for (const activity of activities) {
@@ -183,7 +216,8 @@ export function buildPreview(
       const key = sourceKey(source);
       const metadata = activity.metadata?.[METADATA_KEY] as { booking?: { component?: string } };
       const component = metadata.booking?.component ?? "main";
-      if (!["main", "fee"].includes(component)) throw new Error("已有账目的导入组成部分不兼容。");
+      if (!["main", "fee", "counterpart"].includes(component) && !/^trade:(BUY|SELL|DIVIDEND):\d{6}$/.test(component))
+        throw new Error("已有账目的导入组成部分不兼容。");
       existing.set(key, [...(existing.get(key) ?? []), { id: activity.id, source, component }]);
     }
   }
@@ -221,6 +255,15 @@ export function buildPreview(
       return result("excluded", row.skipReason ?? "不计收支，默认跳过个人记账");
     if (rule.ignored && decision.excluded !== false)
       return result("excluded", `规则忽略：${rule.matched.join("、")}`);
+    if (source.investment) {
+      if (!options.recognizeInvestments) return result("excluded", "投资识别未开启");
+      if (batch.get(sourceKey(source))?.some((other) => sourcesConflict(source, other)))
+        return result("error", "同批基金订单来源内容冲突，请核对");
+      if (seen.has(sourceKey(source))) return result("duplicate", "本批次已有相同基金订单");
+      const investment = fundPreview(row, accountId, accounts, activities, decision);
+      if (investment.status === "ready") seen.add(sourceKey(source));
+      return investment;
+    }
     if (row.parseStatus === "fatal" || row.error)
       return result("error", row.error ?? "来源行格式错误，请修正原文件或明确跳过");
     if (row.unsupportedReason) return result("review", row.unsupportedReason);
@@ -255,6 +298,9 @@ export function buildPreview(
     const hasMain = matches.some((match) => match.component === "main");
     const hasFee = matches.some((match) => match.component === "fee");
     const hasSourceFee = source.fee !== undefined && compare(source.fee, "0") > 0;
+    if (hasMain && options.recognizeInvestments && isInvestmentCash(row) &&
+      !matches.some((match) => match.component === "counterpart"))
+      return result("review", "已有投资资金转账缺少对侧，请先核对历史流水");
     if (hasMain && (!hasSourceFee || hasFee))
       return {
         ...result("duplicate", "此订单已经导入，保留现有账目"),
@@ -345,6 +391,11 @@ export function buildPreview(
       existingIds: matches.map((match) => match.id),
     };
   });
+  if (options.recognizeInvestments) {
+    for (const entry of preview)
+      if (isInvestmentCash(entry.row)) addFundingCounterpart(entry, decisions[rowKey(entry.row)] ?? {}, accounts);
+    return applyInvestmentLinks(applyAssociations(preview, activities, decisions), activities, decisions);
+  }
   return applyAssociations(preview, activities, decisions);
 }
 

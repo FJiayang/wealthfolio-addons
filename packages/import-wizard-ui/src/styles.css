@@ -5,6 +5,20 @@
   min-width: var(--import-wizard-grid-width);
 }
 
+.import-wizard-grid [data-slot="grid-cell-wrapper"]:not([data-editing]) {
+  display: flex;
+  align-items: center;
+}
+
+.import-wizard-grid [data-slot="grid-cell-wrapper"]:not([data-editing]).text-end {
+  justify-content: flex-end;
+}
+
+.import-wizard-grid [data-slot="grid-cell-wrapper"]:not([data-editing]) > [data-slot="grid-cell-content"] {
+  height: auto;
+  max-width: 100%;
+}
+
 @theme inline {
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);

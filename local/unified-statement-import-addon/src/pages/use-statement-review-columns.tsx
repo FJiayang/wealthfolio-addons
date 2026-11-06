@@ -9,7 +9,7 @@ import {
 import { ImportTypeBadge } from "@wealthfolio/import-wizard-ui";
 import type { PreviewRow } from "../import/ledger";
 import { entryActivityTypes, type EntryKind } from "../parsers/types";
-import { kinds, labels, statusAppearance } from "./statement-presentation";
+import { kinds, labels, statementReference, statusAppearance } from "./statement-presentation";
 export function useStatementReviewColumns({
   locked,
   accountOptions,
@@ -18,7 +18,7 @@ export function useStatementReviewColumns({
   accountOptions: { value: string; label: string }[];
 }) {
   const { formatAmount } = useAmountFormatting();
-  const { formatDateTime } = useDateFormatting();
+  const { formatDateTime, formatDate } = useDateFormatting();
   const { formatDecimal } = useNumberFormatting();
   const n = useCallback(
     (value: number) => formatDecimal(value, { maximumFractionDigits: 0 }),
@@ -30,10 +30,10 @@ export function useStatementReviewColumns({
         id: "line",
         accessorKey: "line",
         header: (): string => "#",
-        size: 90,
+        size: 120,
         meta: { readOnly: true, label: "来源行" },
         cell: ({ row }: { row: { original: PreviewRow & { line: number } } }) => (
-          <span className="flex h-full items-center gap-1" title={row.original.reason}>
+          <span className="flex h-full items-center gap-1 text-sm" title={row.original.reason}>
             {n(row.original.line)}
             {(row.original.status === "review" || row.original.status === "error") && (
               <Badge variant={statusAppearance[row.original.status].variant} className="px-1">
@@ -52,7 +52,7 @@ export function useStatementReviewColumns({
           readOnly: locked,
           cell: {
             variant: "select" as const,
-            options: Object.entries(kinds).map(([value, label]) => ({ value, label })),
+            options: Object.entries(kinds).filter(([value]) => value !== "investment").map(([value, label]) => ({ value, label })),
             valueRenderer: (value: string) => (
               <ImportTypeBadge type={entryActivityTypes[value as EntryKind]}>
                 {kinds[value as EntryKind]}
@@ -94,7 +94,7 @@ export function useStatementReviewColumns({
           const appearance = statusAppearance[entry.status];
           const Icon = appearance.icon;
           return (
-            <div className="flex h-full min-w-0 items-center gap-2" title={entry.reason}>
+            <div className="flex h-full min-w-0 items-center gap-2 text-sm" title={entry.reason}>
               <Badge
                 className="shrink-0"
                 variant={appearance.variant}
@@ -134,21 +134,21 @@ export function useStatementReviewColumns({
             "订单号",
             "原金额",
           ][index],
-        accessorFn: (entry: PreviewRow) => entry.row.source[key],
+        accessorFn: (entry: PreviewRow) => key === "recordId" ? statementReference(entry.row.source) : entry.row.source[key],
         cell: ({ row }: { row: { original: PreviewRow } }) => {
           const source = row.original.row.source;
-          const value = source[key];
+          const value = key === "recordId" ? statementReference(source) : source[key];
           return (
-            <span
-              className="block truncate leading-8"
+            <div
+              className="flex h-full min-w-0 items-center text-sm"
               title={key === "date" ? source.originalTime : String(value)}
             >
-              {key === "date" && value
-                ? formatDateTime(value, { dateStyle: "short", timeStyle: "short" })
+              <span className="truncate">{key === "date" && value
+                ? source.datePrecision === "date" ? formatDate(value) : formatDateTime(value, { dateStyle: "short", timeStyle: "short" })
                 : key === "amount"
                   ? formatAmount(value, source.currency, false)
-                  : value}
-            </span>
+                  : value}</span>
+            </div>
           );
         },
         size: key === "description" || key === "recordId" ? 220 : 160,
@@ -182,6 +182,6 @@ export function useStatementReviewColumns({
         meta: { readOnly: true },
       },
     ],
-    [locked, accountOptions, formatAmount, formatDateTime, n],
+    [locked, accountOptions, formatAmount, formatDateTime, formatDate, n],
   );
 }

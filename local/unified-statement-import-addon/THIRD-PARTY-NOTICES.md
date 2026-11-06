@@ -1,5 +1,7 @@
 # 第三方代码与许可
 
+蚂蚁基金 PDF 解析与草稿校验迁移自原本地蚂蚁基金插件。使用 pdf-parse 2.4.5（Mehmet Kozan，Apache-2.0）及 decimal.js 10.6.0（Michael Mclaughlin，MIT），许可分别随包保存于 licenses/pdf-parse-LICENSE.txt、licenses/decimal-LICENSE.txt。全部字体和解析资源在包内，不使用 CDN。
+
 导入步骤条、导航和上传区派生自主项目 Wealthfolio 的 `apps/frontend/src/pages/activity/import/components/`，保留其界面及交互，仅调整插件接口和中文文本。这部分遵循 GNU AGPL v3；本插件整体按 AGPL-3.0-only 发布，完整许可见 LICENSE。
 
 原插件代码的 MIT 许可和版权声明保留于 licenses/original-plugin-MIT.txt。宿主公开的 @wealthfolio/ui 与 SDK 继续通过宿主加载，不修改其源码。

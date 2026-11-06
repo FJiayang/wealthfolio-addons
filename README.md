@@ -40,7 +40,7 @@ pnpm bundle:local
 pnpm test:package:local
 ```
 
-PR 的 `Addon checks` 覆盖元数据、official 检查、共享 UI 和两个 local 插件的类型与单元测试、版本说明和 ZIP 内容验证。构建产物位于该运行的 `local-addon-packages` artifact。
+PR 的 `Addon checks` 覆盖元数据、official 检查、共享 UI 和 local 插件的类型与单元测试、版本说明和 ZIP 内容验证。构建产物位于该运行的 `local-addon-packages` artifact。
 
 合并 `main` 后重新检查，仅为新版本创建 `<插件ID>/v<版本>` Release。附件 `<插件ID>-<版本>.zip` 直接来自该次验证产物；从 Releases 下载后在 Wealthfolio 插件设置中选择“从文件安装”。CI 不自动升版、不发布商店，也不修改宿主数据。
 
@@ -200,7 +200,7 @@ pnpm type-check:official
 pnpm bundle:official
 ```
 
-Fork-maintained PDF import: see [local/ant-fund-pdf-import-addon](local/ant-fund-pdf-import-addon/README.md).
+Fork-maintained statement and fund import: see [local/unified-statement-import-addon](local/unified-statement-import-addon/README.md). The former standalone Ant Fund addon has been merged into this addon.
 The Validate workflow tests and bundles it separately and uploads an installable ZIP.
 
 | Script                     | Description                                                                                                     |

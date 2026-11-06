@@ -1,13 +1,22 @@
-export type EntryKind = "expense" | "income" | "refund" | "transferIn" | "transferOut";
+import type { DraftLeg } from "../ant-fund/import-model";
+export interface FundTransaction {
+  orderId: string;
+  purpose: string;
+  applicationDate?: string;
+  legs: DraftLeg[];
+}
+export type EntryKind = "expense" | "income" | "refund" | "transferIn" | "transferOut" | "investment";
 export const entryActivityTypes: Record<EntryKind, string> = {
   expense: "WITHDRAWAL",
   income: "DEPOSIT",
   refund: "CREDIT",
   transferIn: "TRANSFER_IN",
   transferOut: "TRANSFER_OUT",
+  investment: "BUY",
 };
 
 export interface StatementSource {
+  investment?: FundTransaction;
   pageNumber?: number;
   pageLineNumber?: number;
   sourceAccount?: string;
@@ -43,6 +52,7 @@ export interface StatementSource {
 }
 
 export interface StatementRow {
+  investmentCandidate?: boolean;
   rowId?: string;
   parseStatus?: "ok" | "softSkip" | "hardSkip" | "fatal";
   skipReason?: string;
