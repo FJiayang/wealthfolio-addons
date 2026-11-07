@@ -3,7 +3,7 @@
 本地插件，适用于 Wealthfolio
 3.12.0 及以上。支持支付宝、微信、银行及记账平台账单，不属于官方插件目录。全部解析和账目处理在本机完成，无网络权限。网页导出缺少订单号时只能预览，不能提交。
 
-## 0.4.1 支持格式
+## 0.4.3 支持格式
 
 | 渠道 | 导出结构 |
 | --- | --- |
@@ -34,7 +34,7 @@ pnpm --filter unified-statement-import-addon test:package
 ```
 
 在 Wealthfolio 插件设置中选择“从文件安装”，安装
-`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.4.1.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
+`local/unified-statement-import-addon/dist/unified-statement-import-addon-0.4.3.zip`，授权读取账户、读取活动、批量保存及转账查询／关联。从活动页“支出 → 添加活动”打开“账单导入”（移动端从导入按钮选择）。要求宿主支持 `spending-import` 清单位置；不再提供侧边栏入口，旧版宿主会忽略此入口。开发服务：`pnpm --filter unified-statement-import-addon dev:server`。
 
 ## 使用
 
