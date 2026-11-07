@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { extractPdfTables, openPdf, PdfPasswordError, type PdfPage, type PdfWord } from "./pdf";
 import { getStatementParser } from "./index";
+import { buildPreview, METADATA_KEY } from "../import/ledger";
+import { account, activity } from "../test-fixtures";
 const { load } = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({ getDocument: load }));
 
@@ -12,6 +14,55 @@ function page(title: string, headers: string[], rows: string[][], number = 1): P
 }
 const cmbHeaders = ["记账日期", "货币", "交易金额", "联机余额", "交易摘要", "对手信息"];
 describe("本地 PDF 坐标解析", () => {
+  it("日期上下的摘要和对手信息归入同一笔，预览及提交保留完整内容", () => {
+    const input = page("招商银行交易流水", cmbHeaders, [
+      ["2025-01-01", "CNY", "-10.00", "90.00", "", ""],
+      ["2025-01-02", "CNY", "20.00", "110.00", "", ""],
+      ["2025-01-03", "CNY", "-30.00", "80.00", "", ""],
+    ]);
+    for (let index = 0; index < 3; index++) {
+      const y = 140 + index * 30;
+      input.words.push(word(`合成摘要${index + 1}`, 380, y - 6), word("续文", 380, y + 6),
+        word(`虚构对方${index + 1}`, 470, y - 6), word("有限公司", 470, y + 6));
+    }
+    const rows = getStatementParser("cmb").parse(extractPdfTables([input])[0].records, "synthetic.pdf");
+    expect(rows).toHaveLength(3);
+    rows.forEach((row, index) => {
+      expect(row.source).toMatchObject({ merchant: `虚构对方${index + 1}有限公司`, description: `合成摘要${index + 1}续文`, pageNumber: 1 });
+      const baselines = [...new Set(input.words.map((word) => word.y))].sort((a, b) => a - b);
+      expect(row.source.pageLineNumber).toBe(baselines.indexOf(140 + index * 30) + 1);
+      row.source.recordId = `synthetic-${index}`;
+    });
+    const decisions = Object.fromEntries(rows.map((row) => [row.source.lineNumber, { accountId: "cash" }]));
+    const preview = buildPreview(rows, [account()], [], {}, decisions);
+    expect(preview.every((entry) => entry.status === "ready")).toBe(true);
+    preview.forEach((entry, index) => {
+      expect(entry.create!.comment).toContain(rows[index].source.merchant);
+      expect(entry.create!.metadata).toMatchObject({ [METADATA_KEY]: { sources: [rows[index].source] } });
+    });
+    const stored = preview.map((entry, index) => activity(entry.create!, `saved-${index}`));
+    expect(buildPreview(rows, [account()], stored, {}, decisions).every((entry) => entry.status === "duplicate")).toBe(true);
+  });
+  it("无首页标题和账号仍按完整招商表头识别，缺账号要求补齐", () => {
+    const input = page("招商银行交易流水", cmbHeaders, [["2025-01-01", "CNY", "-10.00", "90.00", "消费", "虚构商户"]]);
+    input.words = input.words.filter((word) => word.y >= 80);
+    const rows = getStatementParser("cmb").parse(extractPdfTables([input])[0].records, "synthetic.pdf");
+    expect(rows[0].source.sourceAccount).toBe("");
+    expect(rows[0].identityReason).toContain("缺少来源账户");
+    expect(() => extractPdfTables([input], "boc")).toThrow("未识别");
+    input.words = input.words.filter((word) => word.text !== "对手信息");
+    expect(() => extractPdfTables([input])).toThrow("未识别");
+  });
+  it("同页重复表头不串单，跨页前导续文仍归上一笔", () => {
+    const first = page("招商银行交易流水", cmbHeaders, [["2025-01-01", "CNY", "-10.00", "90.00", "消费", "虚构"]]);
+    const repeated = page("招商银行交易流水", cmbHeaders, [["2025-01-02", "CNY", "20.00", "110.00", "收入", "第二笔"]]);
+    first.words.push(...repeated.words.filter((word) => word.y >= 80).map((word) => ({ ...word, y: word.y + 220 })));
+    const second = page("招商银行交易流水", cmbHeaders, [], 2);
+    second.words.push(word("续文", 470, 125), ...["2025-01-03", "CNY", "-30.00", "80.00", "消费", "第三笔"].map((text, index) => word(text, 20 + index * 90, 200)));
+    const rows = getStatementParser("cmb").parse(extractPdfTables([first, second])[0].records, "synthetic.pdf");
+    expect(rows.map((row) => row.source.merchant)).toEqual(["虚构", "第二笔续文", "第三笔"]);
+    expect(rows.map((row) => row.source.pageNumber)).toEqual([1, 1, 2]);
+  });
   it("金额含千位分隔、重复表头和页码定位", () => {
     const tables = extractPdfTables([
       page("招商银行交易流水", cmbHeaders, [["2025-01-01", "CNY", "-1,234.56", "9,000.00", "消费", "虚构商户"]]),

@@ -275,7 +275,7 @@ try {
   await fundPage.setViewportSize({ width: 1440, height: 1000 });
   await fundPage.goto(`${origin}/addons/${manifest.id}`);
   const fundFrame = fundPage.frameLocator("iframe");
-  await fundFrame.getByRole("checkbox", { name: "识别投资交易流水", exact: true }).check();
+  await fundFrame.getByRole("switch", { name: "识别投资交易流水", exact: true }).check();
   await fundFrame.locator('[aria-label="流水格式"]').click();
   await fundFrame.getByRole("option", { name: /蚂蚁基金/ }).click();
   await fundFrame.locator('input[type="file"]').setInputFiles({ name: "synthetic-fund.csv", mimeType: "text/csv", buffer: fundCsv });
@@ -314,7 +314,7 @@ try {
   await bankPage.setViewportSize({ width: 1440, height: 1000 });
   await bankPage.goto(`${origin}/addons/${manifest.id}`);
   const bankFrame = bankPage.frameLocator("iframe");
-  await bankFrame.getByRole("checkbox", { name: "识别投资交易流水", exact: true }).check();
+  await bankFrame.getByRole("switch", { name: "识别投资交易流水", exact: true }).check();
   await bankFrame.locator('[aria-label="流水格式"]').click();
   await bankFrame.getByRole("option", { name: /招商银行/ }).click();
   await bankFrame.getByRole("textbox", { name: "来源账户标识" }).fill("synthetic-investment-card");
@@ -392,7 +392,7 @@ try {
   await mappingPage.setViewportSize({ width: 1440, height: 1100 });
   await mappingPage.goto(`${origin}/addons/${manifest.id}`);
   const mappingFrame = mappingPage.frameLocator("iframe");
-  await mappingFrame.getByRole("checkbox", { name: "识别投资交易流水", exact: true }).check();
+  await mappingFrame.getByRole("switch", { name: "识别投资交易流水", exact: true }).check();
   await mappingFrame.getByRole("combobox", { name: "流水格式", exact: true }).click();
   await mappingFrame.getByRole("option", { name: /招商银行/ }).click();
   for (const [index, rows] of [

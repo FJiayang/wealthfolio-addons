@@ -127,14 +127,21 @@ describe("shared statement wizard", () => {
     await renderPage(ctx);
     expect(ctx.api.activities.checkImport).not.toHaveBeenCalled();
     expect(ctx.api.market.searchTicker).not.toHaveBeenCalled();
-    await act(async () => container.querySelector<HTMLElement>('[role="checkbox"]')!.click());
-    expect(container.querySelector('[role="checkbox"]')?.getAttribute("aria-checked")).toBe("true");
+    const toggle = container.querySelector<HTMLElement>('[role="switch"]')!;
+    expect(toggle.getAttribute("aria-label")).toBe("识别投资交易流水");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelector('label[for="recognize-investments"]')?.textContent).toBe("识别投资交易流水");
+    await act(async () => container.querySelector<HTMLLabelElement>('label[for="recognize-investments"]')!.click());
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
     await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("蚂蚁基金"))!.click());
     const file = new File(["date,symbol,quantity,activityType,unitPrice,currency,fee,amount,account,comment\n2026-01-03,000032,10,BUY,9.9,CNY,1,100,fund,合成基金；用户买入；订单号：202601010001"], "synthetic-fund.csv");
     const input = container.querySelector('input[type="file"]')!;
     Object.defineProperty(input, "files", { configurable: true, value: [file] });
     await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(toggle.hasAttribute("data-disabled")).toBe(true);
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     await click("补齐映射");
     await click("保存映射并预览");
     expect(container.textContent).toContain("识别并核对基金资产");
@@ -152,7 +159,7 @@ describe("shared statement wizard", () => {
   it("同一基金公司的多笔银行资金只映射及确认一次，保留全部明细和独立转账", async () => {
     const { ctx, saveMany } = context("", [{ ...account(), name: "招商银行" }, account("fund", "SECURITIES"), account("other-fund", "SECURITIES")]);
     await renderPage(ctx);
-    await act(async () => container.querySelector<HTMLElement>('[role="checkbox"]')!.click());
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
     await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
     await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("招商银行"))!.click());
     const file = new File([

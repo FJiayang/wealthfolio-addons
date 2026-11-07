@@ -24,7 +24,7 @@ it.skipIf(process.env.STATEMENT_DEMO_TESTS !== "1")("本地真实流水：解析
   for (const name of files) {
     const path = join(directory, name);
     const bytes = new Uint8Array(readFileSync(path));
-    const document = await parseStatement(bytes, name, { assets: {
+    const document = await parseStatement(bytes, name, { sourceAccount: "local-demo-source", assets: {
       getBlob: async (path) => new Blob([readFileSync(join(pdfRoot, path.replace(/^dist\/assets\/pdf\//, "")))]),
     } });
     assert(document.rows.length > 0, "未解析出明细");
@@ -40,6 +40,28 @@ it.skipIf(process.env.STATEMENT_DEMO_TESTS !== "1")("本地真实流水：解析
         assert(source.balance === cleanAmount(reference[index][4]), "PDF 余额不一致");
         assert(source.pageNumber && source.sourceAccount && source.recordId, "PDF 缺少页码或稳定来源身份");
       });
+      // Check complete text independently of PDF.js, including tightly packed multiline rows.
+      const compact = (value: string) => value.normalize("NFKC").replace(/\s/g, "");
+      let index = 0;
+      for (const page of text.split("\f")) {
+        const header = page.split("\n").find((line) => line.includes("交易摘要") && line.includes("对手信息"));
+        if (!header) continue;
+        const descriptionStart = header.indexOf("交易摘要") - 2;
+        const merchantStart = header.indexOf("对手信息") - 2;
+        for (const block of page.split(/\n\s*\n/).filter((block) => /^\d{4}-\d{2}-\d{2}\s+[A-Z]{3}\s/m.test(block))) {
+          const lines = block.split("\n");
+          const dates = lines.flatMap((line, index) => /^\d{4}-\d{2}-\d{2}\s+[A-Z]{3}\s/.test(line) ? [index] : []);
+          dates.forEach((date, row) => {
+            const start = row ? Math.floor((dates[row - 1] + date) / 2) + 1 : 0;
+            const end = row + 1 < dates.length ? Math.floor((date + dates[row + 1]) / 2) + 1 : lines.length;
+            const text = lines.slice(start, end);
+            const source = document.rows[index++].source;
+            assert(compact(source.description) === compact(text.map((line) => line.slice(descriptionStart, merchantStart)).join("")), `PDF 第 ${index} 笔完整交易摘要不一致`);
+            assert(compact(source.merchant) === compact(text.map((line) => line.slice(merchantStart)).join("")), `PDF 第 ${index} 笔完整对手信息不一致`);
+          });
+        }
+      }
+      assert(index === document.rows.length, "PDF 完整字段核对笔数不一致");
     }
     const accounts = [account(), account("fund", "SECURITIES")];
     const mappings = Object.fromEntries(document.rows.map((row) => [mappingKey(row.source), row.source.investment ? "fund" : "cash"]));

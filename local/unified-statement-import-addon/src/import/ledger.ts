@@ -248,6 +248,8 @@ export function buildPreview(
     const hardSkip = row.parseStatus === "hardSkip" || row.excluded;
     if (hardSkip || decision.excluded)
       return result("excluded", hardSkip ? source.status || "交易关闭" : "用户排除");
+    if (!options.recognizeInvestments && (source.investment || isInvestmentCash(row)) && !row.error)
+      return result("excluded", "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。");
     if (
       (row.parseStatus ? row.parseStatus === "softSkip" : row.defaultExcluded) &&
       decision.excluded !== false
@@ -256,7 +258,7 @@ export function buildPreview(
     if (rule.ignored && decision.excluded !== false)
       return result("excluded", `规则忽略：${rule.matched.join("、")}`);
     if (source.investment) {
-      if (!options.recognizeInvestments) return result("excluded", "投资识别未开启");
+      if (!options.recognizeInvestments) return result("excluded", "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。");
       if (batch.get(sourceKey(source))?.some((other) => sourcesConflict(source, other)))
         return result("error", "同批基金订单来源内容冲突，请核对");
       if (seen.has(sourceKey(source))) return result("duplicate", "本批次已有相同基金订单");

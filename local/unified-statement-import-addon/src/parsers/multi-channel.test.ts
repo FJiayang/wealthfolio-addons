@@ -206,9 +206,9 @@ describe("P1–P4 渠道 golden", () => {
     expect(preview[0].create?.subtype).toBe("REFUND");
   });
   it("无法提取的手续费及基金记录不能仅通过已核对放行", async () => {
-    for (const [type, remark] of [
-      ["商户消费", "服务费待确认"],
-      ["购买理财通", ""],
+    for (const [type, remark, expectedStatus] of [
+      ["商户消费", "服务费待确认", "review"],
+      ["购买理财通", "", "excluded"],
     ]) {
       const values = fixture(0);
       values[1] = [...values[1]];
@@ -223,7 +223,7 @@ describe("P1–P4 渠道 golden", () => {
           {},
           { [rowKey(row)]: { excluded: false, confirmed: true, accountId: "cash" } },
         )[0].status,
-      ).toBe("review");
+      ).toBe(expectedStatus);
     }
   });
   it("源统计差异只提示，金额合计不受用户跳过影响", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Activity, ActivityBulkMutationRequest, ActivityCreate } from "@wealthfolio/addon-sdk";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
-import { parseStatementSync } from "../parsers";
+import { parseStatement, parseStatementSync } from "../parsers";
 import type { StatementRow } from "../parsers/types";
 import { buildPreview, rowKey, type Decisions, type ExistingActivity } from "./ledger";
 import { cancelInvestmentLink, investmentNodes, investmentSignature, legKey, linkSavedInvestment } from "./investments";
@@ -61,7 +61,36 @@ function host() {
 describe("投资资金及基金交易", () => {
   it("默认不开启投资识别，也不生成基金活动", () => {
     const row = fund();
-    expect(buildPreview([row], accounts, [], {}, {})[0].status).toBe("excluded");
+    expect(buildPreview([row], accounts, [], {}, {})[0]).toMatchObject({
+      status: "excluded", reason: "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。",
+    });
+  });
+  it("银行投资资金关闭时引导开启，开启后沿用资金账户核对及转账", async () => {
+    const document = await parseStatement(new TextEncoder().encode([
+      "记账日期,货币,交易金额,联机余额,交易摘要,对手信息",
+      "2025-01-01,CNY,-100.00,900.00,申购,虚构理财有限责任公司",
+      "2025-01-02,CNY,50.00,950.00,基金快速赎回,虚构基金公司",
+    ].join("\n")), "synthetic-bank.csv", { sourceAccount: "synthetic-card" });
+    const rows = document.rows;
+    expect(rows[0].parseStatus).toBe("softSkip");
+    const mappings = Object.fromEntries(rows.map((row) => [mappingKey(row.source), "cash"]));
+    expect(buildPreview(rows, accounts, [], mappings, {}).every((entry) => entry.status === "excluded" && entry.reason.includes("勾选‘识别投资交易流水’"))).toBe(true);
+    expect(buildPreview(rows, accounts, [], mappings, decisions(rows), [], options).map((entry) => [entry.status, entry.create?.activityType])).toEqual([
+      ["ready", "TRANSFER_OUT"], ["ready", "TRANSFER_IN"],
+    ]);
+    rows[0].error = "金额格式错误";
+    rows[0].parseStatus = "fatal";
+    expect(buildPreview([rows[0]], accounts, [], mappings, {})[0]).toMatchObject({ status: "error", reason: "金额格式错误" });
+  });
+  it("支付宝基金流水关闭时引导开启，手动恢复也不能作为普通收支导入", () => {
+    const row = parseStatementSync(new TextEncoder().encode([HEADER, csvRow({ direction: "不计收支", description: "基金申购" })].join("\n")), "synthetic.csv").rows[0];
+    const choice = { [rowKey(row)]: { excluded: false, accountId: "cash", kind: "expense" as const } };
+    expect(buildPreview([row], accounts, [], {}, choice)[0]).toMatchObject({
+      status: "excluded", reason: "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。",
+    });
+    row.excluded = true;
+    row.source.status = "交易关闭";
+    expect(buildPreview([row], accounts, [], {}, choice)[0].reason).toBe("交易关闭");
   });
   it("银行资金转账双边与基金买入分别记账，手续费只计算一次", () => {
     const rows = [bank(), fund()], entries = preview(rows);
