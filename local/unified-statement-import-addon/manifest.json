@@ -1,7 +1,7 @@
 {
   "id": "unified-statement-import-addon",
   "name": "账单导入",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "本地解析支付平台与银行表格及 PDF，核对来源、自动关联消费、拆分手续费并关联真实转账。",
   "author": "Local fork maintainer",
   "main": "dist/addon.js",

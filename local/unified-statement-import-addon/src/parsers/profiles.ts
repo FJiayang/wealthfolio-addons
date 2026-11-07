@@ -482,7 +482,7 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string,
         reviews.push("未知微信交易类型");
       transfer =
         /^(转入|转出|转账|借入|借出|收债|还债|代付|报销)$/.test(source.direction) ||
-        (p.bank && /转账|汇款/.test(type)) ||
+        (p.bank && p.id !== "cmb-debit" && /转账|汇款/.test(type)) ||
         /零钱充值|零钱提现|信用卡还款|购汇|结汇|充值|提现|还款|转入零钱通|零钱通转出/.test(type);
       if (source.system === "feidee" && source.direction === "退款") kind = "refund";
       if (transfer) {
@@ -569,14 +569,15 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string,
     if (p.bank && !source.direction && kind)
       source.direction =
         kind === "income" || kind === "refund" || kind === "transferIn" ? "收入" : "支出";
-    const unsupportedReason = /购买理财通|基金申购|基金赎回|(?:^|\s)(?:申购|赎回)(?:$|\s)|理财(?:购买|申购|赎回)|证券买入|证券卖出|基金销售|理财有限责任公司/.test(
+    const investment = /购买理财通|基金申购|基金赎回|(?:^|\s)(?:申购|赎回)(?:$|\s)|理财(?:购买|申购|赎回)|证券买入|证券卖出|基金销售|理财有限责任公司/.test(
       `${source.txType || source.description} ${source.merchant}`,
-    )
-      ? "基金及证券交易请使用投资导入插件"
+    );
+    const unsupportedReason = investment
+      ? "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。"
       : source.remark.includes("服务费") && !source.fee
         ? "无法确认手续费金额，请核实原文件后重新导入"
         : undefined;
-    if (unsupportedReason?.includes("投资导入")) softSkip = true;
+    if (investment) softSkip = true;
     const excluded = ["交易关闭", "已关闭", "已撤销"].includes(source.status);
     const identityReason = p.bank && !account ? "缺少来源账户标识，请在上传页补全" : undefined;
     rows.push({

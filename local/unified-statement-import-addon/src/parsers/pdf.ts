@@ -40,6 +40,7 @@ const templates: Template[] = [
     aliases: { 记账日期: ["交易日期", "Date"], 对方户名: ["对方名称", "Counterparty"], 对方账号: ["对方账户"], 借贷标志: ["借贷", "借/贷"], 金额: ["交易金额"], 余额: ["账户余额"] } },
 ];
 const compact = (text: string) => text.normalize("NFKC").replace(/\s/g, "");
+const datedCell = (text: string) => /^(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}/.test(text.trim());
 
 function lines(words: PdfWord[]) {
   const result: { y: number; words: PdfWord[] }[] = [];
@@ -80,10 +81,24 @@ function headerAt(template: Template, pageLines: ReturnType<typeof lines>, index
   };
 }
 
+function lineCells(words: PdfWord[], layout: NonNullable<ReturnType<typeof headerAt>>) {
+  const cells = layout.columns.map(() => "");
+  for (const word of words) {
+    let column = layout.boundaries.length - 1;
+    while (column > 0 && word.x < layout.boundaries[column]) column--;
+    cells[column] += `${cells[column] && /[a-zA-Z0-9]$/.test(cells[column]) && /^[a-zA-Z]/.test(word.text) ? " " : ""}${word.text}`;
+  }
+  return cells;
+}
+
 /** Coordinate reconstruction, shared by real PDFs and synthetic page tests. */
 export function extractPdfTables(pages: PdfPage[], channel?: string): { name: string; records: CsvRecord[] }[] {
   const fullText = pages.flatMap((page) => lines(page.words).map((line) => line.words.map((word) => word.text).join(" "))).join("\n");
-  const candidates = templates.filter((template) => (!channel || channel === template.channel) && template.title.test(compact(fullText)));
+  const candidates = templates.filter((template) => (!channel || channel === template.channel) &&
+    (template.title.test(compact(fullText)) || (template.channel === "cmb" && pages.some((page) => {
+      const pageLines = lines(page.words);
+      return pageLines.some((_, index) => headerAt(template, pageLines, index));
+    }))));
   if (!candidates.length) throw new Error("未识别到支持的银行 PDF 格式，请核对流水渠道。");
   const records: CsvRecord[] = [];
   const accounts = [...fullText.matchAll(/(?:^|\s)(?:客户账号|账户号码|账号|卡号|Account\/Card\s*No\.?)[：:\s]+([\d*＊•·Xx-]{4,})/g)];
@@ -99,6 +114,7 @@ export function extractPdfTables(pages: PdfPage[], channel?: string): { name: st
     const pageLines = lines(page.words);
     let inBody = false;
     let foundRows = false;
+    let cmbAnchors: { y: number; index: number }[] = [];
     for (let i = 0; i < pageLines.length; i++) {
       const line = pageLines[i];
       const text = line.words.map((word) => word.text).join(" ");
@@ -120,6 +136,17 @@ export function extractPdfTables(pages: PdfPage[], channel?: string): { name: st
         }
         inBody = true;
         while (i + 1 < pageLines.length && pageLines[i + 1].y <= active.layout.bottom) i++;
+        if (active.template.channel === "cmb") {
+          const layout = active.layout;
+          const dateIndex = layout.columns.findIndex((column) => column.name === "记账日期");
+          cmbAnchors = [];
+          for (let index = i + 1; index < pageLines.length; index++) {
+            const next = pageLines[index];
+            const text = next.words.map((word) => word.text).join(" ").trim();
+            if (/^(?:第\s*\d+\s*页|\d+\s*\/\s*\d+\s*$|温馨提示|打印时间|合并统计|合计|总计|[-—_]{4,}|说明[:：])/.test(text) || headerAt(active.template, pageLines, index)) break;
+            if (datedCell(lineCells(next.words, layout)[dateIndex])) cmbAnchors.push({ y: next.y, index });
+          }
+        }
         continue;
       }
       if (!active || !inBody) continue;
@@ -130,22 +157,29 @@ export function extractPdfTables(pages: PdfPage[], channel?: string): { name: st
         flush(); inBody = false; continue;
       }
       if (line.y - active.layout.bottom < 48 && line.words.every((word) => /^(?:Date|Currency|Transaction|Amount|Balance|Type|Counter|Party|Customer|Account|No\.?|Name|Description|Debit|Credit|Posting|Posted)(?:\s+(?:Date|Currency|Transaction|Amount|Balance|Type|Counter|Party|Customer|Account|No\.?|Name|Description|Debit|Credit|Posting|Posted))*$/i.test(word.text.trim()))) continue;
-      const cells = active.layout.columns.map(() => "");
-      for (const word of line.words) {
-        let column = active.layout.boundaries.length - 1;
-        while (column > 0 && word.x < active.layout.boundaries[column]) column--;
-        if (column < 0) column = 0;
-        cells[column] += `${cells[column] && /[a-zA-Z0-9]$/.test(cells[column]) && /^[a-zA-Z]/.test(word.text) ? " " : ""}${word.text}`;
-      }
+      const cells = lineCells(line.words, active.layout);
       const dateIndex = active.layout.columns.findIndex((column) => column.name === active!.template.headers[active!.template.dateColumn]);
-      const dated = /^(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}/.test(cells[dateIndex].trim());
+      const dated = datedCell(cells[dateIndex]);
+      if (!dated && /\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(text)) {
+        throw new Error(`第 ${page.number} 页第 ${i + 1} 行日期未能定位，请核对 PDF 列结构。`);
+      }
+      if (active.template.channel === "cmb" && cmbAnchors.length &&
+        !(pending && pending.pageNumber !== page.number && line.y < (active.layout.bottom + cmbAnchors[0].y) / 2)) {
+        // CMB centers dates vertically beside wrapped descriptions and counterparties.
+        const anchor = cmbAnchors.reduce((nearest, candidate) => Math.abs(candidate.y - line.y) < Math.abs(nearest.y - line.y) ? candidate : nearest);
+        if (pending?.pageNumber !== page.number || pending.pageLineNumber !== anchor.index + 1) {
+          flush();
+          pending = { cells: cells.map(() => ""), lineNumber: serial++, pageNumber: page.number, pageLineNumber: anchor.index + 1 };
+        }
+        cells.forEach((cell, index) => { pending!.cells[index] += cell.trim(); });
+        foundRows = true;
+        continue;
+      }
       if (dated) {
         flush();
         pending = { cells, lineNumber: serial++, pageNumber: page.number, pageLineNumber: i + 1 };
         if (active.template.headers.includes("存入")) pending.cells.push(currency);
         foundRows = true;
-      } else if (/\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(text)) {
-        throw new Error(`第 ${page.number} 页第 ${i + 1} 行日期未能定位，请核对 PDF 列结构。`);
       } else if (pending && !cells[dateIndex].trim()) {
         cells.forEach((cell, index) => {
           if (cell.trim()) pending!.cells[index] += cell.trim();

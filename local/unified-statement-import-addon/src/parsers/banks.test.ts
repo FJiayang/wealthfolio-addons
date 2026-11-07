@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { parseStatement } from "./index";
+import { buildPreview, rowKey } from "../import/ledger";
+import { account } from "../test-fixtures";
 
 const csv = (rows: string[][]) => new TextEncoder().encode(rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\n"));
 describe("新增银行的参考导出格式", () => {
+  it("招商普通转账和汇款按金额收支入账，允许手动改为内部转账", async () => {
+    const document = await parseStatement(csv([
+      ["记账日期", "货币", "交易金额", "联机余额", "交易摘要", "对手信息"],
+      ["2025-01-01", "CNY", "-10.00", "90.00", "转账汇款", "虚构对方"],
+      ["2025-01-02", "CNY", "20.00", "110.00", "汇入汇款", "虚构对方"],
+    ]), "synthetic.csv", { sourceAccount: "synthetic-card" });
+    expect(document.rows.map((row) => [row.kind, row.transfer, row.parseStatus])).toEqual([
+      ["expense", false, "ok"], ["income", false, "ok"],
+    ]);
+    const decisions = Object.fromEntries(document.rows.map((row) => [rowKey(row), { accountId: "cash" }]));
+    expect(buildPreview(document.rows, [account()], [], {}, decisions).map((entry) => [entry.status, entry.create?.activityType])).toEqual([
+      ["ready", "WITHDRAWAL"], ["ready", "DEPOSIT"],
+    ]);
+    const row = document.rows[0];
+    expect(buildPreview([row], [account()], [], {}, { [rowKey(row)]: { accountId: "cash", kind: "transferOut", confirmed: true } })[0].create?.activityType).toBe("TRANSFER_OUT");
+  });
   it("微信完成退款类型可带商户前缀，不把缺失退款去向推断成零钱", async () => {
     const document = await parseStatement(csv([
       ["交易时间", "交易类型", "收/支", "金额(元)", "当前状态", "支付方式", "交易单号"],
@@ -71,7 +89,7 @@ describe("新增银行的参考导出格式", () => {
     ]), "synthetic.csv", { sourceAccount: "synthetic-account" });
     for (const row of document.rows) {
       expect(row.parseStatus).toBe("softSkip");
-      expect(row.unsupportedReason).toContain("投资导入");
+      expect(row.unsupportedReason).toContain("勾选‘识别投资交易流水’");
     }
   });
   it("掩码账户保留完整尾号，不截断成前四位", async () => {

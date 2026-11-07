@@ -82,7 +82,7 @@ export const alipayParser: StatementParser = {
         reviewReason = "交易状态需要确认";
       const transfer = direction === "不计收支" && kind !== "refund" && /转入|转出|转账|还款|充值|提现/.test(get(web ? "商品名称" : "商品说明"));
       if (transfer) reviewReason = "请确认实际转入／转出账户与金额";
-      const unsupportedReason = direction === "不计收支" && /-买入|-卖出|基金申购|基金赎回/.test(get(web ? "商品名称" : "商品说明")) ? "基金及证券交易请使用投资导入插件，不能作为普通收支或现金转账入账" : undefined;
+      const unsupportedReason = direction === "不计收支" && /-买入|-卖出|基金申购|基金赎回/.test(get(web ? "商品名称" : "商品说明")) ? "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。" : undefined;
       let amount = get(web ? "金额（元）" : "金额");
       let date = "";
       let error: string | undefined;

@@ -24,6 +24,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Switch,
   useNumberFormatting,
 } from "@wealthfolio/ui";
 import { getStatementParser, parseStatement, statementParsers } from "../parsers";
@@ -745,9 +746,9 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               {step === "upload" && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-sm">
-                    <Checkbox aria-label="识别投资交易流水" checked={recognizeInvestments} disabled={busy || documents.length > 0}
+                    <Switch id="recognize-investments" aria-label="识别投资交易流水" checked={recognizeInvestments} disabled={busy || documents.length > 0}
                       onCheckedChange={(checked) => setRecognizeInvestments(checked === true)} />
-                    识别投资交易流水
+                    <label htmlFor="recognize-investments">识别投资交易流水</label>
                   </div>
                   <Input
                     aria-label="来源账户标识"
