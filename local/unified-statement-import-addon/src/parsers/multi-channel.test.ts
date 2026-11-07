@@ -104,6 +104,28 @@ describe("P1–P4 渠道 golden", () => {
       expect(document.rows[0].error).toBeUndefined();
     },
   );
+  it.each(["xlsx", "biff8"] as const)(
+    "Excel %s 日期序列值超过15位仍保留交易时间、金额和文本单号",
+    async (bookType) => {
+      const rows = fixture(0).map((row) => [...row]) as (string | number)[][];
+      rows[1][0] = 46020 + 28872 / 86400;
+      rows[1][5] = 1234.56;
+      const sheet = utils.aoa_to_sheet(rows);
+      sheet.A2.z = "yyyy-mm-dd hh:mm:ss";
+      sheet.F2.z = "0.00";
+      const workbook = utils.book_new();
+      utils.book_append_sheet(workbook, sheet, "微信明细");
+      const bytes = new Uint8Array(write(workbook, { type: "array", bookType }));
+      const row = (await parseStatement(bytes, "synthetic.xls")).rows[0];
+      expect(row.error).toBeUndefined();
+      expect(row.parseStatus).toBe("ok");
+      expect(row.source).toMatchObject({
+        date: "2025-12-29T00:01:12.000Z",
+        amount: "1234.56",
+        recordId: "00001234567890123456789",
+      });
+    },
+  );
   it("Excel数值长单号阻断，多个工作表保留独立决策身份", async () => {
     const workbook = utils.book_new();
     const rows = fixture(0).map((row) => [...row]) as (string | number)[][];

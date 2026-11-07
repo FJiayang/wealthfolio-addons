@@ -1,4 +1,4 @@
-import { read, utils } from "xlsx";
+import { read, SSF, utils } from "xlsx";
 import { decodeStatement, parseCsv } from "./csv";
 import type { CsvRecord } from "./types";
 
@@ -27,7 +27,7 @@ export function readTables(
     if (candidates.length > 1) throw new Error("账单分隔符不明确，请核对表头。");
     return [{ name: "CSV", records: candidates[0] ?? parseCsv(text) }];
   }
-  const workbook = read(bytes, { type: "array", cellDates: false, cellHTML: false, raw: true });
+  const workbook = read(bytes, { type: "array", cellDates: false, cellNF: true, cellHTML: false, raw: true });
   return workbook.SheetNames.map((name) => {
     const sheet = workbook.Sheets[name];
     const records: CsvRecord[] = [];
@@ -42,7 +42,9 @@ export function readTables(
         const cell = sheet[utils.encode_cell({ r: row, c: column })];
         if (
           cell?.t === "n" &&
-          (!Number.isFinite(cell.v) || String(Math.abs(cell.v)).replace(/[^0-9]/g, "").length > 15)
+          (!Number.isFinite(cell.v) ||
+            (!SSF.is_date(cell.z ?? "") &&
+              String(Math.abs(cell.v)).replace(/[^0-9]/g, "").length > 15))
         )
           error = "数值单元格可能丢失精度，请重新导出为文本。";
         cells.push(cell ? utils.format_cell(cell) : "");

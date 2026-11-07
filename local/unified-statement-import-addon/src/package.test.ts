@@ -36,7 +36,7 @@ it("安装包只有运行文件和说明，没有源账单、测试及商店元�
   expect(manifest.contributes.links["spending-import"][0].route).toBe(
     manifest.contributes.routes[0].id,
   );
-  expect(manifest.version).toBe("0.4.1");
+  expect(manifest.version).toBe("0.4.2");
   expect(manifest.minWealthfolioVersion).toBe("3.12.0");
   expect(manifest.hostDependencies["@wealthfolio/ui"]).toBe("^3.12.0");
   expect(
