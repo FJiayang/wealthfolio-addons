@@ -17,8 +17,9 @@ import { account, activity } from "./test-fixtures";
 // Real statements and expectations stay local; never snapshot their contents.
 it.skipIf(process.env.STATEMENT_DEMO_TESTS !== "1")("本地真实流水：解析、模拟提交与重复导入", async () => {
   const directory = process.env.STATEMENT_DEMO_DIRECTORY ?? fileURLToPath(new URL("../../../docs/demo/", import.meta.url));
-  const files = readdirSync(directory).filter((name) => /支付宝|招商/.test(name) && /\.pdf$|\.csv$/i.test(name));
+  const files = readdirSync(directory).filter((name) => /支付宝|招商|微信/.test(name) && /\.(pdf|csv|xlsx?)$/i.test(name));
   assert(files.some((name) => /招商.*\.pdf$/i.test(name)), "缺少本地招商 PDF");
+  assert(files.some((name) => /微信.*\.xlsx$/i.test(name)), "缺少本地微信 XLSX");
   const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
   for (const name of files) {
     const path = join(directory, name);
