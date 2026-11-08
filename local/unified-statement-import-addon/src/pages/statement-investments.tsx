@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { Account, AddonContext, AssetResolutionInput } from "@wealthfolio/addon-sdk";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
 import { ImportChoice, ImportReviewTable } from "@wealthfolio/import-wizard-ui";
 import type { DraftLeg } from "../ant-fund/import-model";
 import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, investmentTreatment, legKey, linkSavedInvestment } from "../import/investments";
 import { rowKey, type Decisions, type ExistingActivity, type PreviewRow, type RowDecision } from "../import/ledger";
 import { statementReference } from "./statement-presentation";
+import { getStatementParser } from "../parsers";
 import { ImportSelect } from "./import-select";
 
 interface Props {
@@ -136,6 +137,7 @@ export function StatementInvestmentReview({ ctx, preview, decisions, busy, onCha
 export function StatementInvestmentFunding({ preview, decisions, accounts, activities, busy, onChange, mode }: Props & { mode: "mapping" | "review" }) {
   const { formatAmount } = useAmountFormatting();
   const { formatDateTime, formatDate } = useDateFormatting();
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const investmentAccounts = accounts.filter((account) => account.accountType === "SECURITIES" && account.trackingMode === "TRANSACTIONS");
   const nodes = investmentNodes(activities, preview);
   const fundingGroups = new Map<string, PreviewRow[]>();
@@ -152,6 +154,8 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
       const source = entries[0].row.source;
       const company = source.merchant || source.description || "未提供交易对方";
       const groupAccounts = investmentAccounts.filter((account) => account.currency === source.currency);
+      const columns = getStatementParser(source.system).previewColumns;
+      const showOriginalStatus = !columns.some((column) => column.field === "status");
       const eligible = entries.filter((entry) => investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer");
       const groupValue = eligible.length && eligible.every((entry) => decisions[rowKey(entry.row)]?.investmentAccountId === decisions[rowKey(eligible[0].row)]?.investmentAccountId)
         ? decisions[rowKey(eligible[0].row)]?.investmentAccountId ?? "" : "";
@@ -164,8 +168,15 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
               <span className="flex items-center gap-2"><span>查看流水明细</span><Badge variant="secondary">{entries.length} 笔</Badge></span>
             </AccordionTrigger>
             <AccordionContent className="p-0">
-              <div className="max-h-[32rem] overflow-auto">
-                <Accordion multiple>
+              <Table aria-label={`投资资金流水明细：${company}，${source.currency}`} className="min-w-max" containerClassName="max-h-[32rem] overflow-auto">
+                <TableHeader className="bg-card sticky top-0 z-10"><TableRow>
+                  <TableHead>#</TableHead>
+                  {columns.map((column) => <TableHead key={column.field} className="whitespace-nowrap">{column.label}</TableHead>)}
+                  {showOriginalStatus && <TableHead className="whitespace-nowrap">交易状态</TableHead>}
+                  <TableHead className="whitespace-nowrap">处理方式</TableHead><TableHead className="whitespace-nowrap">资金流向</TableHead>
+                  <TableHead className="whitespace-nowrap">处理状态</TableHead><TableHead className="whitespace-nowrap">操作</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
                 {entries.map((entry) => {
                   const row = entry.row, key = rowKey(row), decision = decisions[key] ?? {};
                   const treatment = investmentTreatment(row, decision);
@@ -186,24 +197,29 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
                     ? `资金流向：${accountName(outgoing)} 转出，${accountName(incoming)} 转入`
                     : treatment === "transfer" ? "资金方向待选择" : treatment ? `资金账户：${accountName(entry.accountId)}` : "处理方式待选择";
                   const flow = treatment === "transfer" && direction
-                    ? <span role="img" className="inline-flex flex-wrap items-center gap-1" aria-label={flowLabel}>
+                    ? <span role="img" className="inline-flex items-center gap-1" aria-label={flowLabel}>
                         <span>{accountName(outgoing)}</span><Icons.ArrowRight aria-hidden className="text-muted-foreground size-4 shrink-0 rtl:rotate-180" /><span>{accountName(incoming)}</span>
                       </span>
                     : flowLabel;
-                  return <AccordionItem key={key} value={key}>
-                    <AccordionTrigger aria-label={`展开流水：${label}，${row.source.description || row.source.txType || row.source.merchant || "未提供摘要"}，${formatAmount(entry.amount, row.source.currency)}，原始收支：${row.source.direction || "未提供"}，交易状态：${row.source.status || "未提供"}，${treatmentLabel}，${flowLabel}`} className="px-3 py-2 hover:no-underline">
-                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-sm font-normal">
-                        <span className="text-muted-foreground whitespace-nowrap">{row.source.date ? row.source.datePrecision === "date" ? formatDate(row.source.date) : formatDateTime(row.source.date) : row.source.originalTime}</span>
-                        <span className="min-w-32 flex-1 break-words">{row.source.description || row.source.txType || row.source.merchant || "未提供摘要"}</span>
-                        <span className="whitespace-nowrap tabular-nums">{formatAmount(entry.amount, row.source.currency)}</span>
-                        <span className="text-muted-foreground">原始收支：{row.source.direction || "未提供"}</span>
-                        <span className="text-muted-foreground">状态：{row.source.status || "未提供"}</span>
-                        <span>{treatmentLabel}</span>
-                        <span className="break-words">{flow}</span>
-                        <Badge variant={entry.status === "ready" ? "success-subtle" : "warning-subtle"}>{entry.status === "ready" ? "已就绪" : "待处理"}</Badge>
-                      </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="space-y-3 px-3 pt-2">
+                  return <Fragment key={key}>
+                    <TableRow>
+                      <TableCell className="whitespace-nowrap">{row.source.pageNumber ? `第 ${row.source.pageNumber} 页 第 ${row.source.pageLineNumber ?? row.source.lineNumber} 行` : row.source.lineNumber}</TableCell>
+                      {columns.map((column) => {
+                        const value = column.field === "recordId" ? statementReference(row.source) : String(row.source[column.field] ?? "");
+                        return <TableCell key={column.field} className="max-w-80 whitespace-normal break-words [overflow-wrap:anywhere]" title={value}>{value}</TableCell>;
+                      })}
+                      {showOriginalStatus && <TableCell className="whitespace-normal break-words">{row.source.status || "未提供"}</TableCell>}
+                      <TableCell className="whitespace-nowrap">{treatmentLabel}</TableCell>
+                      <TableCell className="whitespace-normal break-words">{flow}</TableCell>
+                      <TableCell><Badge variant={entry.status === "ready" ? "success-subtle" : "warning-subtle"}>{entry.status === "ready" ? "已就绪" : "待处理"}</Badge></TableCell>
+                      <TableCell><Button variant="ghost" size="sm" aria-label={`流水明细：${label}`} aria-expanded={!!expandedRows[key]}
+                        onClick={() => setExpandedRows((current) => ({ ...current, [key]: !current[key] }))}>
+                        {expandedRows[key] ? <Icons.ChevronUp aria-hidden className="size-4" /> : <Icons.ChevronDown aria-hidden className="size-4" />}
+                        <span>{expandedRows[key] ? "收起" : mode === "mapping" ? "编辑" : "查看"}</span>
+                      </Button></TableCell>
+                    </TableRow>
+                    {expandedRows[key] && <TableRow><TableCell colSpan={columns.length + (showOriginalStatus ? 6 : 5)} className="whitespace-normal">
+                    <div className="space-y-3">
                       <p className="text-muted-foreground break-words text-xs">{label}</p>
                     {mode === "mapping" && <div className="grid gap-3 sm:grid-cols-2">
                       <div><p className="text-sm">处理方式</p><ImportSelect label={`处理方式：${label}`} value={treatment ?? ""} disabled={busy}
@@ -229,11 +245,12 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
                     </> : treatment && <div><p className="text-sm font-medium">资金账户</p>{cashChoice("资金账户")}</div>}
                     {(row.reviewReason || entry.status === "error" || entry.status === "review") && <p className="text-muted-foreground text-sm">{[row.reviewReason, entry.reason].filter((reason, index, all) => reason && all.indexOf(reason) === index).join("；")}</p>}
                     {mode === "mapping" && <Button variant="outline" disabled={busy} onClick={() => onChange(key, { excluded: true })}>跳过此笔</Button>}
-                    </AccordionContent>
-                  </AccordionItem>;
+                    </div>
+                    </TableCell></TableRow>}
+                  </Fragment>;
                 })}
-                </Accordion>
-              </div>
+                </TableBody>
+              </Table>
             </AccordionContent>
           </AccordionItem>
         </Accordion>
