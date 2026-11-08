@@ -156,6 +156,11 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
       const groupAccounts = investmentAccounts.filter((account) => account.currency === source.currency);
       const columns = getStatementParser(source.system).previewColumns;
       const showOriginalStatus = !columns.some((column) => column.field === "status");
+      const treatments = entries.map((entry) => investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}));
+      const assignedTreatments = new Set(treatments.filter((treatment) => treatment !== undefined));
+      const groupTreatment = treatments.every((treatment) => treatment === treatments[0]) ? treatments[0] ?? "" : "";
+      const treatmentPlaceholder = assignedTreatments.size > 1 ? "多种处理方式" :
+        assignedTreatments.size && treatments.some((treatment) => treatment === undefined) ? "部分未设置" : "请选择";
       const eligible = entries.filter((entry) => investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer");
       const groupValue = eligible.length && eligible.every((entry) => decisions[rowKey(entry.row)]?.investmentAccountId === decisions[rowKey(eligible[0].row)]?.investmentAccountId)
         ? decisions[rowKey(eligible[0].row)]?.investmentAccountId ?? "" : "";
@@ -256,7 +261,7 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
         </Accordion>
         {mode === "mapping" && entries.length > 1 && <div className="space-y-1">
           <p className="text-muted-foreground text-sm">批量设置本组全部流水的处理方式；逐笔核对后仍可修改。</p>
-          <ImportSelect label={`批量处理方式：${company}`} value="" disabled={busy}
+          <ImportSelect label={`批量处理方式：${company}`} value={groupTreatment} placeholder={treatmentPlaceholder} disabled={busy}
             options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
             onChange={(value) => { if (value) entries.forEach((entry) => onChange(rowKey(entry.row), {
               investmentTreatment: value as RowDecision["investmentTreatment"], kind: undefined, investmentPeerKey: undefined,

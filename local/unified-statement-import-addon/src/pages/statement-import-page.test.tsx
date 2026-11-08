@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type {
   Account,
@@ -11,7 +11,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
-import { MAPPING_KEY, MAPPING_V2_KEY } from "../import/ledger";
+import { MAPPING_KEY, MAPPING_V2_KEY, type Decisions } from "../import/ledger";
 import { mappingKey } from "../import/account-matching";
 import { RULES_KEY } from "../import/rules";
 import { readFileSync } from "node:fs";
@@ -149,8 +149,14 @@ describe("shared statement wizard", () => {
     const target = preview.find((entry) => /朝朝宝\s*转出/.test(entry.row.source.description));
     expect(Boolean(target)).toBe(true);
     const { ctx } = context("", accounts);
+    function RealFunding() {
+      const [decisions, setDecisions] = useState<Decisions>({});
+      const current = buildPreview(document.rows, accounts, [], mappings, decisions, [], { recognizeInvestments: true });
+      return <StatementInvestmentFunding ctx={ctx} preview={current} decisions={decisions} accounts={accounts} activities={[]} busy={false}
+        onChange={(key, patch) => setDecisions((previous) => ({ ...previous, [key]: { ...previous[key], ...patch } }))} mode="mapping" />;
+    }
     await act(async () => root.render(<FormattingProvider locale="zh-CN" uiLocale="zh" timezone="Asia/Shanghai">
-      <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={{}} accounts={accounts} activities={[]} busy={false} onChange={vi.fn()} mode="mapping" />
+      <RealFunding />
     </FormattingProvider>));
     const label = `local-cmb.pdf 第 ${target!.row.source.lineNumber} 行`;
     const find = (prefix: string) => [...container.querySelectorAll<HTMLElement>("[aria-label]")]
@@ -169,6 +175,15 @@ describe("shared statement wizard", () => {
     expect(find("处理方式")?.textContent).toBe("投资资金转账");
     expect(find("转出账户")?.textContent).toBe("请选择");
     expect(find("转入账户")?.textContent).toContain("cash");
+    const batchLabel = `批量处理方式：${target!.row.source.merchant || target!.row.source.description || "未提供交易对方"}`;
+    const batch = [...container.querySelectorAll<HTMLElement>('[aria-label^="批量处理方式："]')]
+      .find((element) => element.getAttribute("aria-label") === batchLabel)!;
+    expect(Boolean(batch)).toBe(true);
+    await act(async () => batch.click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(batch.textContent).toBe("普通收入");
+    expect(find("处理方式")?.textContent).toBe("普通收入");
   }, 30_000);
   it("默认关闭投资识别，不调用资产接口；开启后在同一向导校验和保存基金", async () => {
     const { ctx, saveMany } = context("", [account(), account("fund", "SECURITIES")]);
@@ -235,6 +250,7 @@ describe("shared statement wizard", () => {
         .find((option) => option.textContent === target)!.click());
     }
     expect(fundingChoices()).toHaveLength(2);
+    expect(container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')?.textContent).toBe("投资资金转账");
     const detailGroups = [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')];
     expect(detailGroups.every((trigger) => trigger.getAttribute("aria-expanded") === "false")).toBe(true);
     await expandInvestmentDetails();
@@ -298,15 +314,27 @@ describe("shared statement wizard", () => {
     ]);
     await expandInvestmentDetails();
     const rows = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="处理方式："]')];
+    const group = () => container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')!;
     expect(rows().map((row) => row.textContent)).toEqual(["请选择", "请选择"]);
-    await act(async () => container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')!.click());
+    expect(group().textContent).toBe("请选择");
+    await act(async () => rows()[0].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(group().textContent).toBe("部分未设置");
+    await act(async () => group().click());
     await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
       .find((option) => option.textContent === "普通收入")!.click());
     expect(rows().map((row) => row.textContent)).toEqual(["普通收入", "普通收入"]);
+    expect(group().textContent).toBe("普通收入");
     await act(async () => rows()[1].click());
     await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
       .find((option) => option.textContent === "普通支出")!.click());
     expect(rows().map((row) => row.textContent)).toEqual(["普通收入", "普通支出"]);
+    expect(group().textContent).toBe("多种处理方式");
+    await act(async () => rows()[1].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(group().textContent).toBe("普通收入");
   });
   it("批量映射前可折叠查看流水明细，批量选择后更新流向并保留逐笔编辑", async () => {
     const { ctx } = context(undefined, [account(), account("fund", "SECURITIES")]);
