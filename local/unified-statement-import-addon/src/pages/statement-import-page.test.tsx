@@ -208,6 +208,10 @@ describe("shared statement wizard", () => {
       .find((option) => option.textContent === "投资资金转账")!.click());
     expect(investment().textContent).toBe("fund");
     expect(find("处理方式")?.textContent).toBe("投资资金转账");
+    const mapped = buildPreview(document.rows, accounts, [], mappings,
+      { [target!.row.rowId!]: { investmentAccountId: "fund", investmentTreatment: "transfer" } }, [], { recognizeInvestments: true })
+      .find((entry) => entry.row.rowId === target!.row.rowId);
+    expect(mapped?.status).toBe("ready");
   }, 30_000);
   it("默认关闭投资识别，不调用资产接口；开启后在同一向导校验和保存基金", async () => {
     const { ctx, saveMany } = context("", [account(), account("fund", "SECURITIES")]);
@@ -661,6 +665,42 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("勾选行首复选框");
     expect(container.textContent).toContain("错误不能通过核对放行");
   });
+  it("大量异常流水分页核对，第二页编辑不会改动其他页", async () => {
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1200);
+    try {
+      const { ctx, stored } = context(undefined, [account(), account("manual")]);
+      await renderPage(ctx);
+      await upload(Array.from({ length: 105 }, (_, index) => csvRow({ id: `bulk-${index}`, status: "处理中" })));
+      await click("保存映射并预览");
+      expect(container.textContent).toContain("第 1–50 条，共 105 条");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      expect(container.textContent).toContain("还有 55 笔记录需要处理");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+      const cell = container.querySelector<HTMLElement>('[role="gridcell"][data-column-id="accountId"]')!;
+      const line = Number(cell.closest('[role="row"]')!.querySelector('[data-column-id="line"]')!.textContent);
+      expect(line).toBeGreaterThanOrEqual(52);
+      await act(async () => cell.firstElementChild!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+      await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+        .find((option) => option.textContent?.includes("manual"))!.click());
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      expect(container.textContent).toContain("还有 5 笔记录需要处理");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      await click("提交确认");
+      await click("导入 105 笔");
+      expect(stored).toHaveLength(105);
+      expect(stored[0].accountId).toBe("cash");
+      expect(stored.findIndex((entry) => entry.accountId === "manual")).toBe(line - 2);
+      expect(stored[51].accountId).toBe("cash");
+    } finally {
+      height.mockRestore();
+      width.mockRestore();
+    }
+  }, 30_000);
   it.each(["ltr", "rtl"])("%s 缺失付款方式在映射项下展示全部六笔关联流水", async (direction) => {
     document.documentElement.dir = direction;
     const { ctx, saveMany } = context();

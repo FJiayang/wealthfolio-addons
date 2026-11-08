@@ -59,6 +59,20 @@ function host() {
 }
 
 describe("投资资金及基金交易", () => {
+  it("映射完成的投资转账无需重复确认，异常和普通转账仍需核对", () => {
+    const row = bank();
+    const choice = { [rowKey(row)]: { investmentAccountId: "fund" } };
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "ready" });
+    expect(preview([row], [], choice)[0].creates).toHaveLength(2);
+    row.reviewReason = "交易状态需要确认";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: row.reviewReason });
+    delete row.reviewReason;
+    row.source.description = "普通转账";
+    row.source.merchant = "虚构对方";
+    row.transfer = true;
+    row.kind = "transferOut";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: "请确认转账方向及实际账户，不得作为普通收支导入" });
+  });
   it.each([
     ["朝朝宝转出", "income", "收入", "transferIn"],
     ["朝朝宝转入", "expense", "支出", "transferOut"],

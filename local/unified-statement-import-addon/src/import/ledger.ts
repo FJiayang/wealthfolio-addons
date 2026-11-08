@@ -332,9 +332,12 @@ export function buildPreview(
     }
     if (amount === "0.00") return result("review", "零金额记录不提交");
     if (row.reviewReason && !decision.confirmed) return result("review", row.reviewReason);
+    // Investment funding has its direction and both accounts configured in the
+    // mapping step. Ordinary transfers still require a separate confirmation.
+    const mappedInvestmentTransfer = row.investmentCandidate && investmentTreatment(row, decision) === "transfer";
     if (
       (row.transfer || kind === "transferIn" || kind === "transferOut") &&
-      (!decision.confirmed || !["transferIn", "transferOut"].includes(kind))
+      ((!decision.confirmed && !mappedInvestmentTransfer) || !["transferIn", "transferOut"].includes(kind))
     )
       return result("review", "请确认转账方向及实际账户，不得作为普通收支导入");
     if (hasSourceFee && (!decision.feeConfirmed || !accountsById.has(decision.feeAccountId ?? "")))

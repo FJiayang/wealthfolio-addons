@@ -80,6 +80,33 @@ it("筛选后批量跳过仅操作当前数据中的稳定 ID，操作后清除�
   expect(container.querySelector('[role="toolbar"]')).toBeNull();
 });
 
+it("审核表每页最多 50 行，选择只作用于本页并可跨页保留", async () => {
+  const onSkip = vi.fn();
+  const data = Array.from({ length: 123 }, (_, index) => ({ id: `row-${index}`, amount: index }));
+  const render = async (rows: typeof data) => act(async () => root.render(
+    <FormattingProvider locale="zh-CN"><ImportReviewTable data={rows} pageSize={50}
+      columns={[{ id: "amount", accessorKey: "amount", header: "金额" }]}
+      getRowId={(row) => row.id} onSkip={onSkip} onRestore={vi.fn()} /></FormattingProvider>,
+  ));
+  await render(data);
+  expect(container.textContent).toContain("第 1–50 条，共 123 条");
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+  expect(container.querySelector('[role="toolbar"]')?.textContent).toContain("已选择 50 行");
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+  expect(container.textContent).toContain("第 51–100 条，共 123 条");
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+  expect(container.querySelector('[role="toolbar"]')?.textContent).toContain("已选择 100 行");
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+  expect(container.textContent).toContain("第 101–123 条，共 123 条");
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+  expect(container.querySelector('[role="toolbar"]')?.textContent).toContain("已选择 123 行");
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button')]
+    .find((button) => button.textContent === "跳过")!.click());
+  expect(onSkip).toHaveBeenCalledWith(data);
+  await render(data.slice(0, 60));
+  expect(container.textContent).toContain("第 51–60 条，共 60 条");
+});
+
 it("文件预览提供原始内容切换", async () => {
   await act(async () =>
     root.render(

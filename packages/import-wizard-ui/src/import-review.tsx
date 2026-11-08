@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getPaginationRowModel } from "@tanstack/table-core";
 import {
   Accordion,
   AccordionContent,
@@ -9,6 +10,7 @@ import {
   Checkbox,
   DataGrid,
   DataGridColumnHeader,
+  Icons,
   Select,
   SelectContent,
   SelectItem,
@@ -169,6 +171,7 @@ export function ImportReviewTable<T>({
   filters,
   onDataChange,
   getCellState,
+  pageSize,
 }: {
   data: T[];
   columns: Parameters<typeof useDataGrid<T>>[0]["columns"];
@@ -185,15 +188,30 @@ export function ImportReviewTable<T>({
     type: "error" | "warning";
     messages: string[];
   } | null;
+  pageSize?: number;
 }) {
   const dir = useDirection();
   const { formatDecimal } = useNumberFormatting();
   const [visible, setVisible] = useState(false);
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: pageSize ?? 50 });
+  const hasMultiplePages = !!pageSize && data.length > pageSize;
+  const paginationModel = useMemo(() => getPaginationRowModel<T>(), []);
+  const tableRef = useRef<{ getRowModel(): { rows: { original: T }[] } } | null>(null);
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(data.length / (pageSize ?? 50)) - 1);
+    setPagination((current) => ({ pageIndex: Math.min(current.pageIndex, lastPage), pageSize: pageSize ?? 50 }));
+  }, [data.length, pageSize]);
   // Match the host grid: validation must read the current draft during render.
   const cellStateRef = useRef(getCellState);
   cellStateRef.current = getCellState;
   const readCellState = useCallback(
-    (rowIndex: number, columnId: string) => cellStateRef.current?.(rowIndex, columnId) ?? null,
+    (rowIndex: number, columnId: string) => {
+      const row = tableRef.current?.getRowModel().rows[rowIndex]?.original;
+      const originalIndex = row === undefined ? rowIndex : dataRef.current.indexOf(row);
+      return cellStateRef.current?.(originalIndex, columnId) ?? null;
+    },
     [],
   );
   const selectionColumn = useMemo<Parameters<typeof useDataGrid<T>>[0]["columns"][number]>(
@@ -206,11 +224,11 @@ export function ImportReviewTable<T>({
       meta: { readOnly: true },
       header: ({ table }) => (
         <Checkbox
-          aria-label="选择全部行"
-          checked={table.getIsAllRowsSelected()}
-          indeterminate={table.getIsSomeRowsSelected()}
+          aria-label={hasMultiplePages ? "选择本页全部行" : "选择全部行"}
+          checked={pageSize ? table.getIsAllPageRowsSelected() : table.getIsAllRowsSelected()}
+          indeterminate={pageSize ? table.getIsSomePageRowsSelected() : table.getIsSomeRowsSelected()}
           disabled={busy || !table.getRowModel().rows.some((row) => row.getCanSelect())}
-          onCheckedChange={(checked) => table.toggleAllRowsSelected(Boolean(checked))}
+          onCheckedChange={(checked) => pageSize ? table.toggleAllPageRowsSelected(Boolean(checked)) : table.toggleAllRowsSelected(Boolean(checked))}
         />
       ),
       cell: ({ row }) => (
@@ -224,7 +242,7 @@ export function ImportReviewTable<T>({
         </div>
       ),
     }),
-    [busy, getRowId],
+    [busy, getRowId, hasMultiplePages, pageSize],
   );
   const reviewColumns = useMemo<Parameters<typeof useDataGrid<T>>[0]["columns"]>(
     () => [
@@ -255,8 +273,13 @@ export function ImportReviewTable<T>({
     enableSearch: false,
     onDataChange,
     meta: { getCellState: readCellState },
+    ...(pageSize ? { state: { pagination }, onPaginationChange: setPagination, getPaginationRowModel: paginationModel, autoResetPageIndex: false } : {}),
     initialState: { columnPinning: { left: ["select"] } },
   });
+  tableRef.current = grid.table;
+  useEffect(() => {
+    if (pageSize && grid.dataGridRef.current) grid.dataGridRef.current.scrollTop = 0;
+  }, [grid.dataGridRef, pagination.pageIndex, pageSize]);
   const selected = grid.table.getSelectedRowModel().rows.map((row) => row.original);
   function run(action: (rows: T[]) => void) {
     action(selected);
@@ -327,6 +350,16 @@ export function ImportReviewTable<T>({
           } as import("react").CSSProperties
         }
       />
+      {pageSize && data.length > pageSize && <div className="flex flex-col gap-3 px-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-muted-foreground text-center text-sm sm:text-start">
+          第 {formatDecimal(pagination.pageIndex * pageSize + 1)}–{formatDecimal(Math.min((pagination.pageIndex + 1) * pageSize, data.length))} 条，共 {formatDecimal(data.length)} 条
+        </p>
+        <div className="flex items-center justify-center gap-2">
+          <span className="text-muted-foreground text-sm">第 {formatDecimal(pagination.pageIndex + 1)} / {formatDecimal(grid.table.getPageCount())} 页</span>
+          <Button variant="outline" size="icon" className="h-9 w-9 sm:h-8 sm:w-8" aria-label="上一页" disabled={!grid.table.getCanPreviousPage()} onClick={() => grid.table.previousPage()}><Icons.ChevronLeft className="h-4 w-4 rtl:rotate-180" /></Button>
+          <Button variant="outline" size="icon" className="h-9 w-9 sm:h-8 sm:w-8" aria-label="下一页" disabled={!grid.table.getCanNextPage()} onClick={() => grid.table.nextPage()}><Icons.ChevronRight className="h-4 w-4 rtl:rotate-180" /></Button>
+        </div>
+      </div>}
     </div>
   );
 }

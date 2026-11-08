@@ -39,6 +39,7 @@ import {
   MAPPING_KEY,
   MAPPING_V2_KEY,
   rowKey,
+  sourceKey,
   restoreMappings,
   type Decisions,
   type ExistingActivity,
@@ -671,6 +672,15 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
         .map((entry) => ({ ...entry, line: entry.row.source.lineNumber, id: rowKey(entry.row) })),
     [preview, typeFilter, accountFilter, statusFilter],
   );
+  const reviewSources = useMemo(() => {
+    const byId = new Map(rows.map((row) => [rowKey(row), row]));
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const key = sourceKey(row.source);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return { byId, counts };
+  }, [rows]);
   const columns = useStatementReviewColumns({ locked, accountOptions });
   const steps = [
     { id: "upload", label: "上传" },
@@ -1242,6 +1252,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   {step === "preview" && (
                     <ImportReviewTable
                       key={file?.name}
+                      pageSize={50}
                       data={gridRows}
                       columns={columns}
                       getRowId={(entry) =>
@@ -1279,7 +1290,10 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                           entry.kind === "transferOut",
                         ) &&
                         buildPreview(
-                          rows,
+                          // A unique source has no batch interactions. Avoid rebuilding
+                          // the whole statement once per selected row in large imports.
+                          (reviewSources.counts.get(sourceKey(entry.row.source)) ?? 0) === 1
+                            ? [reviewSources.byId.get(entry.id)!] : rows,
                           accounts,
                           activities,
                           effectiveMappings,
