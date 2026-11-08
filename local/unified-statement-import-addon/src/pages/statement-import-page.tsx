@@ -294,22 +294,30 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   );
   const blockedCount = (counts.review ?? 0) + (counts.error ?? 0);
   const pendingFunds = preview.some((entry) => entry.row.source.investment && ["review", "error"].includes(entry.status));
-  const incompleteInvestmentMappings = preview.filter((entry) => {
-    if (["excluded", "duplicate"].includes(entry.status)) return false;
+  const incompleteInvestmentMappings = preview.flatMap((entry) => {
+    if (["excluded", "duplicate"].includes(entry.status)) return [];
+    const missing: string[] = [];
     if (entry.row.source.investment) {
       const account = accounts.find((item) => item.id === entry.accountId);
-      return !account || account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" || account.currency !== "CNY";
+      if (!account || account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" || account.currency !== "CNY")
+        missing.push("基金持有账户");
+    } else if (entry.row.investmentCandidate) {
+      const decision = decisions[rowKey(entry.row)] ?? {};
+      const treatment = investmentTreatment(entry.row, decision);
+      if (!treatment) missing.push("处理方式");
+      if (!accounts.some((account) => account.id === entry.accountId)) missing.push("资金账户");
+      if (treatment === "transfer") {
+        if (!["transferIn", "transferOut"].includes(entry.kind ?? "")) missing.push("资金方向");
+        const account = accounts.find((item) => item.id === decision.investmentAccountId);
+        if (!account || account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" ||
+          account.currency !== entry.row.source.currency || account.id === entry.accountId) missing.push("投资账户");
+      }
     }
-    if (!entry.row.investmentCandidate) return false;
-    const decision = decisions[rowKey(entry.row)] ?? {};
-    const treatment = investmentTreatment(entry.row, decision);
-    if (!treatment || !entry.accountId) return true;
-    if (treatment !== "transfer") return false;
-    const account = accounts.find((item) => item.id === decision.investmentAccountId);
-    return !["transferIn", "transferOut"].includes(entry.kind ?? "") || !account ||
-      account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" ||
-      account.currency !== entry.row.source.currency || account.id === entry.accountId;
+    return missing.length ? [{ entry, missing }] : [];
   });
+  const investmentIssueCounts = new Map<string, number>();
+  for (const { missing } of incompleteInvestmentMappings)
+    for (const issue of missing) investmentIssueCounts.set(issue, (investmentIssueCounts.get(issue) ?? 0) + 1);
   const activityCounts = new Map<string, number>();
   for (const entry of preview.filter((entry) => entry.status === "ready"))
     for (const create of entry.creates ?? (entry.create ? [entry.create] : []))
@@ -963,7 +971,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                     </AlertFeedback>
                   )}
                   {hasInvestments && <AlertFeedback variant="warning" title="基金持有账户">基金交易请选择人民币、按交易流水跟踪的证券账户。</AlertFeedback>}
-                  {incompleteInvestmentMappings.length > 0 && <AlertFeedback variant="warning" title="请补齐投资流水配置">仍有 {n(incompleteInvestmentMappings.length)} 笔基金或投资资金流水需要选择处理方式、方向或账户。</AlertFeedback>}
+                  {incompleteInvestmentMappings.length > 0 && <AlertFeedback variant="warning" title="请补齐投资流水配置">仍有 {n(incompleteInvestmentMappings.length)} 笔流水待配置：{[...investmentIssueCounts].map(([issue, count]) => `${issue} ${n(count)} 笔`).join("；")}。</AlertFeedback>}
                   {!accounts.length && (
                     <AlertFeedback variant="warning" title={"待确认"}>
                       {"没有可选择的账户，请先在主程序创建账户。"}

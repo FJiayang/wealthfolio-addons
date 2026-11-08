@@ -96,6 +96,7 @@ describe("投资资金及基金交易", () => {
     const ordinary = preview([row], [], choice)[0];
     expect(ordinary.status).toBe("ready");
     expect(ordinary.creates?.map((create) => create.activityType)).toEqual(["WITHDRAWAL"]);
+    expect(ordinary.creates?.[0].accountId).toBe("cash");
   });
   it("保留投资候选的异常状态、独立不支持原因及硬错误", () => {
     const row = bank();

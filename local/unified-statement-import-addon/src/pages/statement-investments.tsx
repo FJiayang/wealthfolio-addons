@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import type { Account, AddonContext, AssetResolutionInput } from "@wealthfolio/addon-sdk";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
 import { ImportChoice, ImportReviewTable } from "@wealthfolio/import-wizard-ui";
 import type { DraftLeg } from "../ant-fund/import-model";
 import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, investmentTreatment, legKey, linkSavedInvestment } from "../import/investments";
@@ -162,11 +162,22 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
       const treatmentPlaceholder = assignedTreatments.size > 1 ? "多种处理方式" :
         assignedTreatments.size && treatments.some((treatment) => treatment === undefined) ? "部分未设置" : "请选择";
       const eligible = entries.filter((entry) => investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer");
-      const groupValue = eligible.length && eligible.every((entry) => decisions[rowKey(entry.row)]?.investmentAccountId === decisions[rowKey(eligible[0].row)]?.investmentAccountId)
-        ? decisions[rowKey(eligible[0].row)]?.investmentAccountId ?? "" : "";
+      const pendingTreatment = treatments.filter((treatment) => treatment === undefined).length;
+      const pendingInvestment = eligible.filter((entry) => !groupAccounts.some((account) =>
+        account.id === decisions[rowKey(entry.row)]?.investmentAccountId && account.id !== entry.accountId)).length;
+      const accountIds = entries.map((entry) => decisions[rowKey(entry.row)]?.investmentAccountId || "");
+      const assignedAccounts = new Set(accountIds.filter(Boolean));
+      const groupValue = accountIds.every((id) => id === accountIds[0]) ? accountIds[0] : "";
+      const accountPlaceholder = assignedAccounts.size > 1 ? "多个投资账户" :
+        assignedAccounts.size && accountIds.some((id) => !id) ? "部分未设置" : "请选择";
       return <div key={groupKey} className="space-y-3 rounded-lg border p-4">
         <div className="flex flex-wrap items-center gap-2"><p className="font-medium">{company}</p>
-          <Badge variant="secondary" className="gap-2"><span>{entries.length} 笔</span><span>{source.currency}</span></Badge></div>
+          <Badge variant="secondary" className="gap-2"><span>{entries.length} 笔</span><span>{source.currency}</span></Badge>
+          {mode === "mapping" && <Badge variant={pendingTreatment ? "warning-subtle" : "success-subtle"}>
+            {pendingTreatment ? `处理方式待配置 ${pendingTreatment} 笔` : "处理方式已设置"}
+          </Badge>}
+          {mode === "mapping" && pendingInvestment > 0 && <Badge variant="warning-subtle">投资账户待配置 {pendingInvestment} 笔</Badge>}
+        </div>
         <Accordion className="rounded-md border">
           <AccordionItem value="details" className="border-0">
             <AccordionTrigger aria-label={`查看流水明细：${company}，${source.currency}`} className="px-3 py-2 hover:no-underline">
@@ -259,25 +270,33 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
             </AccordionContent>
           </AccordionItem>
         </Accordion>
-        {mode === "mapping" && entries.length > 1 && <div className="space-y-1">
-          <p className="text-muted-foreground text-sm">批量设置本组全部流水的处理方式；逐笔核对后仍可修改。</p>
+        {mode === "mapping" && <>
+        <div role="group" aria-label="批量投资配置" className="grid max-w-4xl gap-4 md:grid-cols-2">
+        <div className="space-y-1">
+          <Label>处理方式</Label>
           <ImportSelect label={`批量处理方式：${company}`} value={groupTreatment} placeholder={treatmentPlaceholder} disabled={busy}
             options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
             onChange={(value) => { if (value) entries.forEach((entry) => onChange(rowKey(entry.row), {
               investmentTreatment: value as RowDecision["investmentTreatment"], kind: undefined, investmentPeerKey: undefined,
             })); }} />
-        </div>}
-        {mode === "mapping" && eligible.length > 0 && <div className="space-y-1">
-          <p className="text-muted-foreground text-sm">批量填充投资账户；与资金账户相同的流水不会被填充，可逐笔调整。</p>
-          <ImportSelect label={`批量投资账户：${company}`} value={groupValue}
+        </div>
+        <div className="space-y-1">
+          <Label>投资账户</Label>
+          <ImportSelect label={`批量投资账户：${company}`} value={groupValue} placeholder={accountPlaceholder}
             options={groupAccounts.map((account) => ({ value: account.id, label: account.name }))} disabled={busy}
-            onChange={(id) => eligible.filter((entry) => !id || entry.accountId !== id).forEach((entry) => onChange(rowKey(entry.row), { investmentAccountId: id, investmentPeerKey: undefined }))} />
-          <Button variant="outline" disabled={busy} onClick={() => eligible.filter((entry) => {
+            onChange={(id) => entries.filter((entry) => !id || entry.accountId !== id).forEach((entry) => onChange(rowKey(entry.row), { investmentAccountId: id, investmentPeerKey: undefined }))} />
+        </div>
+        </div>
+        <p className="text-muted-foreground text-sm">批量设置后仍可逐笔调整；与资金账户相同的投资账户不会被填充。普通收入和支出只记入资金账户；投资账户仅用于投资资金转账。</p>
+        {!groupAccounts.length && <p className={eligible.length ? "text-warning text-sm" : "text-muted-foreground text-sm"}>
+          {eligible.length ? "没有同币种、按交易流水跟踪的证券账户，请先创建投资账户。" : "暂无可选投资账户；普通收支无需配置投资账户。"}
+        </p>}
+        {eligible.length > 0 && <Button variant="outline" disabled={busy} onClick={() => eligible.filter((entry) => {
             const id = decisions[rowKey(entry.row)]?.investmentAccountId;
             return entry.status !== "error" && !!entry.accountId && ["transferIn", "transferOut"].includes(entry.kind ?? "") &&
               groupAccounts.some((account) => account.id === id && account.id !== entry.accountId);
-          }).forEach((entry) => onChange(rowKey(entry.row), { confirmed: true }))}>批量核对本组资金流水</Button>
-        </div>}
+          }).forEach((entry) => onChange(rowKey(entry.row), { confirmed: true }))}>批量核对本组资金流水</Button>}
+        </>}
 
       </div>;
     })}
