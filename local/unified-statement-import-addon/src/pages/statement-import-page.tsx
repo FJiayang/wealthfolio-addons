@@ -65,6 +65,7 @@ import { StatementAssociations } from "./statement-associations";
 import { cancelSavedAssociation } from "../import/associations";
 import { investmentTreatment } from "../import/investments";
 import { StatementInvestmentReview, StatementInvestmentFunding, StatementSavedInvestments } from "./statement-investments";
+import { StatementFinalPreview } from "./statement-final-preview";
 type ImportStep = "upload" | "mapping" | "assets" | "preview" | "confirm" | "result";
 
 const accountTypes: Record<Account["accountType"], string> = {
@@ -1408,6 +1409,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       </div>
                     </div>
                   )}
+                  {step === "confirm" && <StatementFinalPreview preview={preview} accounts={accounts} activities={activities} />}
                 </div>
               )}
               {step === "result" && submission && (

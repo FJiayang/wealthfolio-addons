@@ -31,6 +31,14 @@ export interface Submission {
   unconfirmed?: number;
 }
 
+// The confirmation view and the actual write must use the same mutations.
+export function pendingMutations(preview: PreviewRow[]) {
+  return {
+    creates: preview.flatMap((entry) => entry.creates ?? (entry.create ? [entry.create] : [])),
+    updates: preview.flatMap((entry) => entry.updates ?? []),
+  };
+}
+
 export function createSubmitter(host: ImportHost) {
   let busy = false;
   return async (
@@ -56,10 +64,7 @@ export function createSubmitter(host: ImportHost) {
           created: 0,
           message: "已有账目或账户状态发生变化，预览已刷新，请重新确认。",
         };
-      const creates = preview.flatMap(
-        (entry) => entry.creates ?? (entry.create ? [entry.create] : []),
-      );
-      const updates = preview.flatMap((entry) => entry.updates ?? []);
+      const { creates, updates } = pendingMutations(preview);
       if (preview.some((entry) => entry.status === "error" || entry.status === "review"))
         return {
           outcome: "changed",

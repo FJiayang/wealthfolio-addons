@@ -308,6 +308,13 @@ describe("shared statement wizard", () => {
     await act(async () => confirmations()[1].click());
     await click("保存映射并预览");
     await click("提交确认");
+    const finalRows = [...container.querySelectorAll('[aria-label="拟导入活动明细"] tbody tr')];
+    expect(finalRows).toHaveLength(6);
+    expect(finalRows.map((row) => {
+      const cells = row.querySelectorAll("td");
+      return [cells[1].textContent, cells[3].textContent];
+    })).toEqual([["转出", "招商银行"], ["转入", "fund"], ["转入", "招商银行"], ["转出", "other-fund"],
+      ["转出", "招商银行"], ["转入", "other-fund"]]);
     await click("导入 3 笔");
     expect(saveMany).toHaveBeenCalledOnce();
     expect(saveMany.mock.calls[0][0].creates?.map((create) => [create.accountId, create.activityType, create.amount])).toEqual([
