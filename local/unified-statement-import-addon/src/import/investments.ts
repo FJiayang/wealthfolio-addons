@@ -122,7 +122,7 @@ export function fundPreview(row: StatementRow, accountId: string, accounts: Acco
     creates.length ? "投资交易已就绪；未匹配资金侧时可先导入" : updates.length ? "认领旧基金交易来源，不修改金额或份额" : "基金订单已导入，保留现有交易", creates, updates);
 }
 
-export function addFundingCounterpart(entry: PreviewRow, decision: RowDecision, accounts: Account[]) {
+export function addFundingCounterpart(entry: PreviewRow, decision: RowDecision, accounts: Account[], saved: ExistingActivity[] = []) {
   if (entry.status !== "ready" || !entry.create) return;
   const investmentAccount = accounts.find((account) => account.id === decision.investmentAccountId);
   if (!investmentAccount || investmentAccount.accountType !== "SECURITIES" || investmentAccount.trackingMode !== "TRANSACTIONS" ||
@@ -141,7 +141,33 @@ export function addFundingCounterpart(entry: PreviewRow, decision: RowDecision, 
       booking: { ...value(main).booking, component: "counterpart", accountId: investmentAccount.id,
         kind: peerType === "TRANSFER_IN" ? "transferIn" : "transferOut" } } } };
   entry.creates = [main, peer, ...(entry.creates ?? []).filter((create) => create !== main)];
-  entry.reason = "资金转账已就绪；未匹配基金交易时可先导入";
+  if (saved.length) {
+    const valid = saved.every((activity) => {
+      const metadata = value(activity);
+      const expected = metadata?.booking?.component === "main" ? main : metadata?.booking?.component === "counterpart" ? peer : undefined;
+      if (!expected || activity.sourceGroupId !== group || activity.accountId !== expected.accountId ||
+          (activity.activityTypeOverride ?? activity.activityType) !== expected.activityType || activity.currency !== expected.currency ||
+          !activityDate(activity) || new Date(activityDate(activity)).getTime() !== new Date(expected.activityDate).getTime() || activity.amount == null ||
+          metadata.investment?.role !== "funding" || metadata.investment.investmentAccountId !== investmentAccount.id) return false;
+      try { return compare(String(activity.amount), String(expected.amount)) === 0 &&
+        compare(metadata.booking.amount, String(expected.amount)) === 0 && metadata.booking.accountId === expected.accountId &&
+        metadata.booking.kind === value(expected).booking.kind; }
+      catch { return false; }
+    });
+    if (!valid) {
+      entry.status = "review"; entry.reason = "已保存的投资转账与本次配置不一致，请先核对历史流水";
+      delete entry.create; entry.creates = []; return;
+    }
+    const components = new Set(saved.map((activity) => value(activity).booking.component));
+    entry.creates = entry.creates.filter((create) => !components.has(value(create).booking.component));
+    const savedValue = value(saved[0]);
+    for (const create of entry.creates) if (["main", "counterpart"].includes(value(create).booking.component))
+      create.metadata = { ...(create.metadata as Record<string, unknown>), [METADATA_KEY]: {
+        ...value(create), sources: structuredClone(savedValue.sources), investment: structuredClone(savedValue.investment),
+      } };
+    entry.create = entry.creates[0];
+  }
+  entry.reason = saved.length ? "将补齐已保存资金转账缺失的一侧" : "资金转账已就绪；未匹配基金交易时可先导入";
 }
 
 export interface InvestmentNode {

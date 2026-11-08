@@ -30,6 +30,7 @@ export function activityDate(activity: ExistingActivity): string {
   return activity.activityDate ?? (activity.date instanceof Date ? activity.date.toISOString() : activity.date ?? "");
 }
 export interface RowDecision {
+  identityNewFor?: string;
   investmentTreatment?: InvestmentTreatment;
   fundLegs?: DraftLeg[];
   fundAssets?: Record<string, AssetResolutionInput>;
@@ -52,6 +53,7 @@ export type Decisions = Record<string, RowDecision>;
 export const rowKey = (row: StatementRow): string => row.rowId ?? String(row.source.lineNumber);
 export type PreviewStatus = "ready" | "duplicate" | "excluded" | "review" | "error";
 export interface PreviewRow {
+  identityConflict?: { signature: string; historicalCount: number; incomingCount: number; files: string[] };
   investmentLink?: InvestmentLink;
   association?: Association;
   updates?: ActivityUpdate[];
@@ -81,7 +83,8 @@ export function sourceKey(
   source: Pick<StatementSource, "system" | "recordId" | "sourceAccount">,
 ): string {
   return JSON.stringify(
-    source.sourceAccount && !["alipay", "wechat", "jd", "mt", "ant-fund"].includes(source.system)
+    source.sourceAccount && (!["alipay", "wechat", "jd", "mt", "ant-fund"].includes(source.system) ||
+      source.recordId.startsWith("composite:") || source.recordId.startsWith("composite-occ:"))
       ? [source.system, source.sourceAccount, source.recordId]
       : [source.system, source.recordId],
   );
@@ -179,8 +182,19 @@ export function readSources(activity: ExistingActivity): StatementSource[] {
         "signedAmount",
         "transactionAmount",
         "transactionCurrency",
+        "compositeBaseId",
+        "compositeDocumentDigest",
+        "statementDigest",
       ].some((key) => source[key] !== undefined && typeof source[key] !== "string") ||
+      (source.statementDigest !== undefined && !/^[a-f0-9]{64}$/.test(source.statementDigest)) ||
       ["pageNumber", "pageLineNumber"].some((key) => source[key] !== undefined && (!Number.isInteger(source[key]) || Number(source[key]) < 1)) ||
+      (source.compositeOccurrence !== undefined && (!Number.isInteger(source.compositeOccurrence) || Number(source.compositeOccurrence) < 1)) ||
+      (source.compositeBaseId !== undefined && (!source.compositeIdentity || !/^composite:[a-f0-9]{64}$/.test(source.compositeBaseId) ||
+        !/^[a-f0-9]{64}$/.test(source.compositeDocumentDigest ?? "") || !source.compositeOccurrence ||
+        (source.statementDigest !== undefined && source.statementDigest !== source.compositeDocumentDigest) ||
+        source.recordId !== `composite-occ:${source.compositeBaseId.slice(10)}:${source.compositeDocumentDigest}:${source.compositeOccurrence}`)) ||
+      (source.recordId.startsWith("composite-occ:") && source.compositeBaseId === undefined) ||
+      (source.compositeBaseId === undefined && (source.compositeDocumentDigest !== undefined || source.compositeOccurrence !== undefined)) ||
       (source.compositeIdentity !== undefined && typeof source.compositeIdentity !== "boolean")
     )
       throw new Error("已有账目的导入来源信息不完整，已停止检测。");
@@ -218,7 +232,10 @@ export function buildPreview(
       kind: treatment === "transfer" ? investmentCashKind(row) : treatment ?? undefined };
   });
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
-  const existing = new Map<string, { id: string; source: StatementSource; component: string }[]>();
+  const existing = new Map<string, { id: string; source: StatementSource; component: string; activity: ExistingActivity }[]>();
+  const historicalGroups = new Map<string, Map<string, StatementSource>>();
+  const baseKey = (source: StatementSource) => source.compositeIdentity
+    ? JSON.stringify([source.system, source.sourceAccount ?? "", source.compositeBaseId ?? source.recordId]) : "";
   for (const activity of activities) {
     for (const source of readSources(activity)) {
       const key = sourceKey(source);
@@ -226,15 +243,36 @@ export function buildPreview(
       const component = metadata.booking?.component ?? "main";
       if (!["main", "fee", "counterpart"].includes(component) && !/^trade:(BUY|SELL|DIVIDEND):\d{6}$/.test(component))
         throw new Error("已有账目的导入组成部分不兼容。");
-      existing.set(key, [...(existing.get(key) ?? []), { id: activity.id, source, component }]);
+      existing.set(key, [...(existing.get(key) ?? []), { id: activity.id, source, component, activity }]);
+      if (source.compositeIdentity && ["main", "counterpart"].includes(component)) {
+        const group = historicalGroups.get(baseKey(source)) ?? new Map<string, StatementSource>();
+        group.set(key, source);
+        historicalGroups.set(baseKey(source), group);
+      }
     }
   }
+  // A previously resolved one-row excerpt must keep the occurrence identity on
+  // re-import, even though that excerpt does not itself contain a collision.
+  rows = rows.map((row) => {
+    const source = row.source;
+    if (!source.compositeIdentity || source.compositeBaseId || !source.statementDigest || !source.recordId.startsWith("composite:")) return row;
+    const history = historicalGroups.get(baseKey(source));
+    const prior = [...(history?.values() ?? [])].find((stored) => stored.compositeDocumentDigest === source.statementDigest && stored.compositeOccurrence === 1);
+    if (!prior && !decisions[rowKey(row)]?.identityNewFor) return row;
+    return { ...row, source: { ...source, compositeBaseId: source.recordId, compositeDocumentDigest: source.statementDigest,
+      compositeOccurrence: 1, recordId: `composite-occ:${source.recordId.slice(10)}:${source.statementDigest}:1` } };
+  });
   const batch = new Map<string, StatementSource[]>();
+  const incomingGroups = new Map<string, StatementRow[]>();
   for (const { source } of rows) {
     if (source.recordId) {
       const key = sourceKey(source);
       batch.set(key, [...(batch.get(key) ?? []), source]);
     }
+  }
+  for (const row of rows) if (row.source.compositeIdentity) {
+    const key = baseKey(row.source);
+    incomingGroups.set(key, [...(incomingGroups.get(key) ?? []), row]);
   }
   const seen = new Set<string>();
   const preview = rows.map((row) => {
@@ -285,7 +323,7 @@ export function buildPreview(
     const key = sourceKey(source);
     const matches = existing.get(key) ?? [];
     if (
-      ["main", "fee"].some(
+      ["main", "fee", "counterpart"].some(
         (component) =>
           new Set(matches.filter((match) => match.component === component).map(({ id }) => id))
             .size > 1,
@@ -308,13 +346,38 @@ export function buildPreview(
       )
     )
       return result("review", "复合身份存在多笔相同流水，请补充稳定参考号或跳过");
+    if (source.compositeIdentity) {
+      const group = incomingGroups.get(baseKey(source)) ?? [];
+      const history = historicalGroups.get(baseKey(source)) ?? new Map<string, StatementSource>();
+      const digest = source.compositeDocumentDigest ?? source.statementDigest;
+      const sameDocument = (other: StatementSource) => !!digest &&
+        digest === (other.compositeDocumentDigest ?? other.statementDigest);
+      const fileId = row.rowId ? JSON.parse(row.rowId)[0] : source.fileName;
+      const otherRows = group.filter((other) => !other.excluded && !decisions[rowKey(other)]?.excluded &&
+        (other.rowId ? JSON.parse(other.rowId)[0] : other.source.fileName) !== fileId && !sameDocument(other.source));
+      const foreignHistory = [...history.entries()].filter(([, stored]) => !sameDocument(stored));
+      const multiple = !!source.compositeBaseId || group.some((item) => !!item.source.compositeBaseId) ||
+        [...history.values()].some((item) => !!item.compositeBaseId) || (!!digest && (foreignHistory.length > 0 || otherRows.length > 0));
+      const exactOccurrence = matches.some(({ source: stored, component }) => (component === "main" || component === "counterpart") &&
+        (!!source.compositeBaseId || sameDocument(stored)));
+      if (multiple && !exactOccurrence && (foreignHistory.length || otherRows.length)) {
+        const signature = JSON.stringify([baseKey(source), [...foreignHistory.map(([id]) => id)].sort(),
+          otherRows.map((other) => [other.source.compositeDocumentDigest ?? other.source.statementDigest ?? other.source.fileName,
+            rowKey(other)]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
+        if (decision.identityNewFor !== signature) return { ...result("review", "不同账单含有相同内容的多笔流水，无法确定是否已入账"),
+          identityConflict: { signature, historicalCount: foreignHistory.length, incomingCount: otherRows.length,
+            files: [...new Set([...foreignHistory.map(([, stored]) => stored.fileName), ...otherRows.map((other) => other.source.fileName)])] } };
+      }
+    }
     const hasMain = matches.some((match) => match.component === "main");
     const hasFee = matches.some((match) => match.component === "fee");
+    const hasCounterpart = matches.some((match) => match.component === "counterpart");
+    const investmentFunding = row.investmentCandidate && investmentTreatment(row, decision) === "transfer";
+    const repairFunding = !!source.compositeBaseId && investmentFunding && hasMain !== hasCounterpart;
     const hasSourceFee = source.fee !== undefined && compare(source.fee, "0") > 0;
-    if (hasMain && row.investmentCandidate && investmentTreatment(row, decision) === "transfer" &&
-      !matches.some((match) => match.component === "counterpart"))
+    if (hasMain && investmentFunding && !hasCounterpart && !repairFunding)
       return result("review", "已有投资资金转账缺少对侧，请先核对历史流水");
-    if (hasMain && (!hasSourceFee || hasFee))
+    if (hasMain && (!hasSourceFee || hasFee) && !repairFunding)
       return {
         ...result("duplicate", "此订单已经导入，保留现有账目"),
         existingIds: matches.map((match) => match.id),
@@ -402,14 +465,16 @@ export function buildPreview(
     }
     seen.add(key);
     return {
-      ...result("ready", "已就绪", creates[0]),
+      ...result("ready", "已就绪", repairFunding ? create : creates[0]),
       creates,
       existingIds: matches.map((match) => match.id),
     };
   });
   if (options.recognizeInvestments) {
     for (const entry of preview)
-      if (entry.row.investmentCandidate && investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer") addFundingCounterpart(entry, decisions[rowKey(entry.row)] ?? {}, accounts);
+      if (entry.row.investmentCandidate && investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer")
+        addFundingCounterpart(entry, decisions[rowKey(entry.row)] ?? {}, accounts,
+          entry.row.source.compositeBaseId ? (existing.get(sourceKey(entry.row.source)) ?? []).filter((match) => ["main", "counterpart"].includes(match.component)).map((match) => match.activity) : []);
     return applyInvestmentLinks(applyAssociations(preview, activities, decisions), activities, decisions);
   }
   return applyAssociations(preview, activities, decisions);

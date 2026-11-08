@@ -355,6 +355,11 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
     (count, entries) => count + entries.length,
     0,
   );
+  const identityGroups = new Map<string, PreviewRow[]>();
+  for (const entry of preview) if (entry.identityConflict) {
+    const key = JSON.stringify([entry.identityConflict.signature, entry.row.source.fileName]);
+    identityGroups.set(key, [...(identityGroups.get(key) ?? []), entry]);
+  }
 
   function changeMapping(method: string, accountId: string) {
     setMappingChoices((current) => ({ ...current, [method]: accountId }));
@@ -431,6 +436,28 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
       open={open}
       accounts={accountOptions}
     />
+  );
+  const renderIdentityConflicts = () => identityGroups.size > 0 && (
+    <ImportMappingGroup pending title={`跨账单流水待核对 · ${n([...identityGroups.values()].reduce((sum, entries) => sum + entries.length, 0))} 笔`}>
+      <p className="text-muted-foreground text-sm">不同账单中有无法区分的相同流水。请核实历史记录后选择；视为新流水会创建新的账目。</p>
+      {[...identityGroups].map(([key, entries]) => {
+        const conflict = entries[0].identityConflict!;
+        return <div key={key} className="space-y-3 rounded-lg border p-4">
+          <p>{entries[0].row.source.fileName} · 本组 {n(entries.length)} 笔 · 已有 {n(conflict.historicalCount)} 笔 · 其他待导入 {n(conflict.incomingCount)} 笔</p>
+          <p className="text-muted-foreground break-words text-sm">相关来源：{conflict.files.join("、") || "未提供文件名"}</p>
+          {renderDetails(entries, `跨账单：${entries[0].row.source.fileName}`, false)}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" disabled={busy} onClick={() => entries.forEach((entry) => changeDecision(rowKey(entry.row), { identityNewFor: entry.identityConflict!.signature }))}>本组视为新流水</Button>
+            <Button variant="outline" disabled={busy} onClick={() => entries.forEach((entry) => changeDecision(rowKey(entry.row), { excluded: true }))}>本组本次跳过</Button>
+          </div>
+          <div className="space-y-2">{entries.map((entry) => <div key={rowKey(entry.row)} className="flex flex-wrap items-center gap-2 text-sm">
+            <span>{entry.row.source.fileName} · 第 {n(entry.row.source.lineNumber)} 行</span>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => changeDecision(rowKey(entry.row), { identityNewFor: entry.identityConflict!.signature })}>视为新流水</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => changeDecision(rowKey(entry.row), { excluded: true })}>本次跳过</Button>
+          </div>)}</div>
+        </div>;
+      })}
+    </ImportMappingGroup>
   );
 
   async function upload(file: File) {
@@ -954,6 +981,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
+                  {renderIdentityConflicts()}
                   <RulesEditor
                     rules={rules}
                     rows={rows}
@@ -1217,6 +1245,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                 accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} onWorkingChange={setBusy} />}
               {(step === "preview" || step === "confirm") && (
                 <div className="space-y-4">
+                  {renderIdentityConflicts()}
                   {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
                     accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} mode="review" />}
                   {preview

@@ -28,6 +28,10 @@ export interface StatementSource {
   fee?: string;
   datePrecision?: "date" | "datetime";
   compositeIdentity?: boolean;
+  statementDigest?: string;
+  compositeBaseId?: string;
+  compositeDocumentDigest?: string;
+  compositeOccurrence?: number;
   transactionAmount?: string;
   transactionCurrency?: string;
   signedAmount?: string;

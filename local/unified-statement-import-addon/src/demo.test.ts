@@ -14,6 +14,31 @@ import { investmentCashKind, investmentSignature, investmentTreatment, isInvestm
 import { createSubmitter } from "./import/session";
 import { account, activity } from "./test-fixtures";
 
+it.skipIf(!process.env.STATEMENT_COMPOSITE_PDF)("本地 PDF：余额链流水模拟导入及重导", async () => {
+  const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  const document = await parseStatement(new Uint8Array(readFileSync(process.env.STATEMENT_COMPOSITE_PDF!)), "local.pdf", {
+    sourceAccount: "local-demo-source", assets: { getBlob: async (path) => new Blob([readFileSync(join(pdfRoot, path.replace(/^dist\/assets\/pdf\//, "")))]) },
+  });
+  const rows = document.rows.filter((row) => row.source.compositeBaseId && isInvestmentCash(row));
+  assert(rows.length > 1, "样本没有可用余额链的投资资金流水");
+  const accounts = [account(), account("fund", "SECURITIES")];
+  const mappings = Object.fromEntries(rows.map((row) => [mappingKey(row.source), "cash"]));
+  const decisions = Object.fromEntries(rows.map((row) => [rowKey(row), { investmentTreatment: "transfer" as const, investmentAccountId: "fund", confirmed: true }]));
+  const options = { recognizeInvestments: true };
+  const before = buildPreview(rows, accounts, [], mappings, decisions, [], options);
+  assert(before.every((entry) => entry.status === "ready" && entry.creates?.length === 2), "资金流水未形成独立的双边转账");
+  const stored: Activity[] = [];
+  const host = { accounts: { getAll: async () => accounts }, activities: { getAll: async () => stored,
+    saveMany: async ({ creates = [] }: ActivityBulkMutationRequest) => {
+      const created = creates.map((create, index) => ({ ...activity(create, `demo-${index}`), sourceGroupId: create.sourceGroupId }));
+      stored.push(...created);
+      return { created, updated: [], deleted: [], createdMappings: [], errors: [] };
+    } } };
+  const result = await createSubmitter(host)(rows, mappings, decisions, before, [], options);
+  assert(result.outcome === "success" && result.created === rows.length * 2, "模拟保存未完成");
+  assert(buildPreview(rows, accounts, stored, mappings, decisions, [], options).every((entry) => entry.status === "duplicate"), "重导未全部查重");
+}, 30_000);
+
 it.skipIf(!process.env.STATEMENT_CMB_PDF)("本地招商 PDF：朝朝宝资金方向及双边活动", async () => {
   const path = process.env.STATEMENT_CMB_PDF!;
   const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));

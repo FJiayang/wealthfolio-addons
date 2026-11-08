@@ -19,7 +19,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { getStatementParser, parseStatement } from "../parsers";
 import { statementReference } from "./statement-presentation";
-import { buildPreview } from "../import/ledger";
+import { buildPreview, rowKey } from "../import/ledger";
 import { StatementInvestmentFunding } from "./statement-investments";
 const scoped = (method: string) => mappingKey({ system: "alipay", accountHint: "", paymentMethod: method });
 import { FormattingProvider } from "@wealthfolio/ui";
@@ -315,6 +315,38 @@ describe("shared statement wizard", () => {
       ["cash", "TRANSFER_IN", "50.00"], ["other-fund", "TRANSFER_OUT", "50.00"],
       ["cash", "TRANSFER_OUT", "200.00"], ["other-fund", "TRANSFER_IN", "200.00"],
     ]);
+  });
+  it("跨账单身份歧义展示来源，并可逐组视为新流水或本次跳过", async () => {
+    const rowsText = ["账号：synthetic-card", "记账日期,货币,交易金额,联机余额,交易摘要,对手信息",
+      "2026-01-01,CNY,100.00,100.00,朝朝宝转出,合成商户",
+      "2026-01-01,CNY,-100.00,0.00,基金申购,合成基金公司",
+      "2026-01-01,CNY,100.00,100.00,朝朝宝转出,合成商户",
+      "2026-01-01,CNY,-100.00,0.00,基金申购,合成基金公司"];
+    const previous = await parseStatement(new TextEncoder().encode(rowsText.join("\n")), "old.csv");
+    const accounts = [{ ...account(), name: "招商银行" }, account("fund", "SECURITIES")];
+    const mappings = Object.fromEntries(previous.rows.map((row) => [mappingKey(row.source), "cash"]));
+    const choices = Object.fromEntries(previous.rows.map((row) => [rowKey(row), { investmentTreatment: "transfer" as const, investmentAccountId: "fund" }]));
+    const initial = buildPreview(previous.rows, accounts, [], mappings, choices, [], { recognizeInvestments: true });
+    const { ctx, stored } = context("", accounts);
+    for (const [index, create] of initial.flatMap((entry) => entry.creates ?? []).entries())
+      stored.push({ ...activity(create, `old-${index}`), sourceGroupId: create.sourceGroupId });
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("招商银行"))!.click());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([[...rowsText,
+      "2026-01-02,CNY,1.00,1.00,普通收入,合成对方"].join("\n")], "overlap.csv")] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await vi.waitFor(async () => { await act(async () => {}); expect(container.textContent).toContain("overlap.csv"); });
+    await click("补齐映射");
+    expect(container.textContent).toContain("跨账单流水待核对 · 4 笔");
+    expect(container.textContent).toContain("old.csv");
+    expect(container.textContent).toContain("已有 2 笔");
+    await click("本组视为新流水");
+    expect(container.textContent).toContain("跨账单流水待核对 · 2 笔");
+    await click("本组本次跳过");
+    expect(container.textContent).not.toContain("跨账单流水待核对");
   });
   it("疑似基金收益先选择处理方式，异常状态仍须单独核对", async () => {
     const { ctx, saveMany } = context();
