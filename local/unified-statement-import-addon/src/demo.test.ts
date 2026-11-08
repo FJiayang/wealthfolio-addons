@@ -10,9 +10,32 @@ import { parseStatement } from "./parsers";
 import { cleanAmount } from "./parsers/decimal";
 import { buildPreview, rowKey } from "./import/ledger";
 import { mappingKey } from "./import/account-matching";
-import { investmentSignature, legKey } from "./import/investments";
+import { investmentCashKind, investmentSignature, investmentTreatment, isInvestmentCash, legKey } from "./import/investments";
 import { createSubmitter } from "./import/session";
 import { account, activity } from "./test-fixtures";
+
+it.skipIf(!process.env.STATEMENT_CMB_PDF)("本地招商 PDF：朝朝宝资金方向及双边活动", async () => {
+  const path = process.env.STATEMENT_CMB_PDF!;
+  const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  const document = await parseStatement(new Uint8Array(readFileSync(path)), "local-cmb.pdf", {
+    sourceAccount: "local-demo-source", assets: {
+      getBlob: async (asset) => new Blob([readFileSync(join(pdfRoot, asset.replace(/^dist\/assets\/pdf\//, "")))]),
+    },
+  });
+  const rows = document.rows.filter((row) => /朝朝宝\s*转出/.test(row.source.description));
+  assert(rows.length > 0, "样本中未找到朝朝宝转出流水");
+  for (const row of rows) {
+    assert(isInvestmentCash(row), "朝朝宝转出应识别为投资资金候选");
+    assert(investmentTreatment(row, {}) === "transfer", "朝朝宝转出应建议投资资金转账");
+    assert(investmentCashKind(row) === "transferIn", "朝朝宝转出应作为银行卡转入");
+    const choices = { [rowKey(row)]: { confirmed: true, investmentAccountId: "fund" } };
+    const preview = buildPreview([row], [account(), account("fund", "SECURITIES")], [],
+      { [mappingKey(row.source)]: "cash" }, choices, [], { recognizeInvestments: true })[0];
+    assert(preview.status === "ready", "朝朝宝资金流水未就绪");
+    assert(preview.creates?.length === 2 && preview.creates[0].activityType === "TRANSFER_IN" &&
+      preview.creates[1].activityType === "TRANSFER_OUT", "朝朝宝转出双边方向不正确");
+  }
+});
 
 // Real statements and expectations stay local; never snapshot their contents.
 it.skipIf(process.env.STATEMENT_DEMO_TESTS !== "1")("本地真实流水：解析、模拟提交与重复导入", async () => {
@@ -70,7 +93,7 @@ it.skipIf(process.env.STATEMENT_DEMO_TESTS !== "1")("本地真实流水：解析
       const fundAssets = legs ? Object.fromEntries(legs.map((leg) => [legKey(leg), { id: "local-demo-" + leg.code, symbol: leg.code, quoteMode: "MANUAL" as const }])) : undefined;
       return [rowKey(row), { confirmed: true, investmentAccountId: "fund",
         ...(legs ? { fundAssets, fundChecked: investmentSignature(legs, "fund", fundAssets) } : {}),
-        ...(!row.kind || row.identityReason ? { excluded: true } : {}),
+        ...(!row.kind || row.identityReason || (isInvestmentCash(row) && !investmentTreatment(row, {})) ? { excluded: true } : {}),
       }];
     }));
     const stored: Activity[] = [];

@@ -1,6 +1,6 @@
 import type { Account, Activity, ActivityCreate, ActivityUpdate, AssetResolutionInput } from "@wealthfolio/addon-sdk";
 import type { DraftLeg } from "../ant-fund/import-model";
-import { addFundingCounterpart, applyInvestmentLinks, fundPreview, investmentCashKind, isInvestmentCash, type ImportOptions, type InvestmentLink } from "./investments";
+import { addFundingCounterpart, applyInvestmentLinks, fundPreview, investmentCashKind, isInvestmentCash, investmentTreatment, type InvestmentTreatment, type ImportOptions, type InvestmentLink } from "./investments";
 import { applyAssociations, type Association } from "./associations";
 import { normalizeAmount } from "../parsers/csv";
 import {
@@ -30,6 +30,7 @@ export function activityDate(activity: ExistingActivity): string {
   return activity.activityDate ?? (activity.date instanceof Date ? activity.date.toISOString() : activity.date ?? "");
 }
 export interface RowDecision {
+  investmentTreatment?: InvestmentTreatment;
   fundLegs?: DraftLeg[];
   fundAssets?: Record<string, AssetResolutionInput>;
   fundChecked?: string;
@@ -204,11 +205,18 @@ export function buildPreview(
   rules: ImportRule[] = [],
   options: ImportOptions = {},
 ): PreviewRow[] {
-  rows = rows.map((row) => options.recognizeInvestments && isInvestmentCash(row) && !row.error && !row.excluded
-    ? { ...row, unsupportedReason: undefined, defaultExcluded: false, parseStatus: "ok" as const,
-      transfer: true, reviewReason: undefined,
-      kind: investmentCashKind(row) }
-    : row);
+  rows = rows.map((row) => {
+    if (!options.recognizeInvestments || !isInvestmentCash(row) || row.error || row.excluded || row.parseStatus === "fatal" || row.parseStatus === "hardSkip") return row;
+    const treatment = investmentTreatment(row, decisions[rowKey(row)] ?? {});
+    const investmentOnlySkip = row.unsupportedReason?.includes("勾选‘识别投资交易流水’") ?? false;
+    const canRestore = Boolean(treatment && (!row.unsupportedReason || investmentOnlySkip));
+    return { ...row, investmentCandidate: true,
+      unsupportedReason: investmentOnlySkip && treatment ? undefined : row.unsupportedReason,
+      defaultExcluded: canRestore ? false : row.defaultExcluded,
+      parseStatus: canRestore && row.parseStatus === "softSkip" ? "ok" as const : row.parseStatus,
+      transfer: treatment === "transfer" ? true : treatment ? false : row.transfer,
+      kind: treatment === "transfer" ? investmentCashKind(row) : treatment ?? undefined };
+  });
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const existing = new Map<string, { id: string; source: StatementSource; component: string }[]>();
   for (const activity of activities) {
@@ -238,7 +246,8 @@ export function buildPreview(
     const accountId =
       decision.accountId ??
       resolveAccount(source.paymentMethod, accounts, mappings, source, rule.accountId).accountId;
-    const kind = decision.kind ?? row.kind;
+    const kind = row.investmentCandidate && investmentTreatment(row, decision) !== "transfer"
+      ? row.kind : decision.kind ?? row.kind;
     let amount = decision.amount ?? source.amount;
     const result = (
       status: PreviewStatus,
@@ -248,6 +257,8 @@ export function buildPreview(
     const hardSkip = row.parseStatus === "hardSkip" || row.excluded;
     if (hardSkip || decision.excluded)
       return result("excluded", hardSkip ? source.status || "交易关闭" : "用户排除");
+    if (row.investmentCandidate && !investmentTreatment(row, decision))
+      return result("review", "疑似投资相关流水，请选择处理方式");
     if (!options.recognizeInvestments && (source.investment || isInvestmentCash(row)) && !row.error)
       return result("excluded", "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。");
     if (
@@ -300,7 +311,7 @@ export function buildPreview(
     const hasMain = matches.some((match) => match.component === "main");
     const hasFee = matches.some((match) => match.component === "fee");
     const hasSourceFee = source.fee !== undefined && compare(source.fee, "0") > 0;
-    if (hasMain && options.recognizeInvestments && isInvestmentCash(row) &&
+    if (hasMain && row.investmentCandidate && investmentTreatment(row, decision) === "transfer" &&
       !matches.some((match) => match.component === "counterpart"))
       return result("review", "已有投资资金转账缺少对侧，请先核对历史流水");
     if (hasMain && (!hasSourceFee || hasFee))
@@ -395,7 +406,7 @@ export function buildPreview(
   });
   if (options.recognizeInvestments) {
     for (const entry of preview)
-      if (isInvestmentCash(entry.row)) addFundingCounterpart(entry, decisions[rowKey(entry.row)] ?? {}, accounts);
+      if (entry.row.investmentCandidate && investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer") addFundingCounterpart(entry, decisions[rowKey(entry.row)] ?? {}, accounts);
     return applyInvestmentLinks(applyAssociations(preview, activities, decisions), activities, decisions);
   }
   return applyAssociations(preview, activities, decisions);

@@ -32,12 +32,23 @@ export function investmentInstitution(source: StatementSource): string | undefin
   return undefined;
 }
 export function isInvestmentCash(row: StatementRow): boolean {
-  return !row.source.investment && /基金|理财|证券|申购|赎回/.test(`${row.source.txType ?? ""} ${row.source.description} ${row.source.merchant}`);
+  return !row.source.investment && (/基金|理财|证券|申购|赎回/.test(`${row.source.txType ?? ""} ${row.source.description} ${row.source.merchant}`) ||
+    (row.source.system === "cmb" && /朝朝宝/.test(row.source.description)));
+}
+export type InvestmentTreatment = "transfer" | "income" | "expense";
+export function investmentTreatment(row: StatementRow, decision: RowDecision): InvestmentTreatment | undefined {
+  if (decision.investmentTreatment) return decision.investmentTreatment;
+  const text = `${row.source.txType ?? ""} ${row.source.description}`;
+  if (/收益|分红|利息|管理费|手续费|服务费|税费|费用/.test(text)) return undefined;
+  if (row.source.system === "cmb" && /^朝朝宝\s*转[入出]$/.test(row.source.description.trim())) return "transfer";
+  return /申购|赎回|买入|卖出/.test(text) ? "transfer" : undefined;
 }
 export function investmentCashKind(row: StatementRow): "transferIn" | "transferOut" | undefined {
-  if (row.kind === "income" || row.kind === "refund" || row.kind === "transferIn" || row.source.direction === "收入") return "transferIn";
+  if (row.kind === "income" || row.kind === "transferIn" || row.source.direction === "收入") return "transferIn";
   if (row.kind === "expense" || row.kind === "transferOut" || row.source.direction === "支出") return "transferOut";
   const text = `${row.source.txType ?? ""} ${row.source.description}`;
+  if (row.source.system === "cmb" && /^朝朝宝\s*转出$/.test(row.source.description.trim())) return "transferIn";
+  if (row.source.system === "cmb" && /^朝朝宝\s*转入$/.test(row.source.description.trim())) return "transferOut";
   if (/赎回|卖出/.test(text)) return "transferIn";
   if (/申购|买入|购买/.test(text)) return "transferOut";
   return undefined;

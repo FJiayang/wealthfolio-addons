@@ -49,7 +49,7 @@ export function useStatementReviewColumns({
         header: "记账性质",
         size: 150,
         meta: {
-          readOnly: locked,
+          readOnly: (entry: PreviewRow) => locked(entry) || !!entry.row.investmentCandidate,
           cell: {
             variant: "select" as const,
             options: Object.entries(kinds).filter(([value]) => value !== "investment").map(([value, label]) => ({ value, label })),

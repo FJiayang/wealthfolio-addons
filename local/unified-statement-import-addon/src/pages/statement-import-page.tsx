@@ -58,6 +58,7 @@ import { WizardStepIndicator } from "../components/step-indicator";
 import { StepNavigation } from "../components/step-navigation";
 import { StatementAssociations } from "./statement-associations";
 import { cancelSavedAssociation } from "../import/associations";
+import { investmentTreatment } from "../import/investments";
 import { StatementInvestmentReview, StatementInvestmentFunding, StatementSavedInvestments } from "./statement-investments";
 type ImportStep = "upload" | "mapping" | "assets" | "preview" | "confirm" | "result";
 
@@ -289,12 +290,28 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   );
   const blockedCount = (counts.review ?? 0) + (counts.error ?? 0);
   const pendingFunds = preview.some((entry) => entry.row.source.investment && ["review", "error"].includes(entry.status));
+  const incompleteInvestmentMappings = preview.filter((entry) => {
+    if (["excluded", "duplicate"].includes(entry.status)) return false;
+    if (entry.row.source.investment) {
+      const account = accounts.find((item) => item.id === entry.accountId);
+      return !account || account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" || account.currency !== "CNY";
+    }
+    if (!entry.row.investmentCandidate) return false;
+    const decision = decisions[rowKey(entry.row)] ?? {};
+    const treatment = investmentTreatment(entry.row, decision);
+    if (!treatment || !entry.accountId) return true;
+    if (treatment !== "transfer") return false;
+    const account = accounts.find((item) => item.id === decision.investmentAccountId);
+    return !["transferIn", "transferOut"].includes(entry.kind ?? "") || !account ||
+      account.accountType !== "SECURITIES" || account.trackingMode !== "TRANSACTIONS" ||
+      account.currency !== entry.row.source.currency || account.id === entry.accountId;
+  });
   const activityCounts = new Map<string, number>();
   for (const entry of preview.filter((entry) => entry.status === "ready"))
     for (const create of entry.creates ?? (entry.create ? [entry.create] : []))
       activityCounts.set(create.activityType, (activityCounts.get(create.activityType) ?? 0) + 1);
   const unresolvedKinds = preview.filter(
-    (entry) => entry.status !== "excluded" && entry.status !== "duplicate" && !entry.kind,
+    (entry) => entry.status !== "excluded" && entry.status !== "duplicate" && !entry.kind && !entry.row.investmentCandidate,
   );
   const kindGroups = new Map<string, PreviewRow[]>();
   for (const entry of unresolvedKinds) {
@@ -362,12 +379,14 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
 
   function changeDecision(line: string, patch: RowDecision) {
     if (step === "result") setStep("preview");
+    const affectsConfirmation = ["amount", "kind", "accountId", "investmentAccountId", "investmentTreatment", "excluded"]
+      .some((field) => Object.hasOwn(patch, field));
     setDecisions((current) => ({
       ...current,
       [line]: {
         ...current[line],
-        confirmed: false,
-        ...(patch.amount !== undefined || patch.kind !== undefined || patch.accountId !== undefined
+        ...(affectsConfirmation ? { confirmed: false } : {}),
+        ...(patch.amount !== undefined || Object.hasOwn(patch, "kind") || patch.accountId !== undefined || Object.hasOwn(patch, "investmentTreatment")
           ? { feeConfirmed: false }
           : {}),
         ...patch,
@@ -440,7 +459,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
   }
 
   async function saveMappings() {
-    if (unresolvedMethods.length || unresolvedKinds.length) return;
+    if (unresolvedMethods.length || unresolvedKinds.length || incompleteInvestmentMappings.length) return;
     setBusy(true);
     setError("");
     try {
@@ -708,7 +727,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       !evaluated.error &&
                       (step === "upload" ||
                         (step === "assets" ? !pendingFunds : step === "mapping"
-                          ? !unresolvedMethods.length && !unresolvedKinds.length
+                          ? !unresolvedMethods.length && !unresolvedKinds.length && !incompleteInvestmentMappings.length
                           : !!counts.ready && !blockedCount))
                     }
                     nextLabel={
@@ -750,6 +769,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       onCheckedChange={(checked) => setRecognizeInvestments(checked === true)} />
                     <label htmlFor="recognize-investments">识别投资交易流水</label>
                   </div>
+                  <p className="text-muted-foreground text-sm">开启后识别疑似投资资金和基金明细；请在映射页确认流水性质、方向及账户。添加文件后本次不能切换。</p>
                   <Input
                     aria-label="来源账户标识"
                     placeholder="银行账单缺少账号时，填写稳定的来源账户标识；不要使用文件名"
@@ -912,8 +932,6 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               )}
               {step === "mapping" && (
                 <div className="space-y-4">
-                  {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
-                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} />}
                   <RulesEditor
                     rules={rules}
                     rows={rows}
@@ -940,6 +958,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                       {parser.mappingHint(n(rows.length))}
                     </AlertFeedback>
                   )}
+                  {hasInvestments && <AlertFeedback variant="warning" title="基金持有账户">基金交易请选择人民币、按交易流水跟踪的证券账户。</AlertFeedback>}
+                  {incompleteInvestmentMappings.length > 0 && <AlertFeedback variant="warning" title="请补齐投资流水配置">仍有 {n(incompleteInvestmentMappings.length)} 笔基金或投资资金流水需要选择处理方式、方向或账户。</AlertFeedback>}
                   {!accounts.length && (
                     <AlertFeedback variant="warning" title={"待确认"}>
                       {"没有可选择的账户，请先在主程序创建账户。"}
@@ -1158,6 +1178,8 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                         })}
                     </ImportMappingGroup>
                   ))}
+                  {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
+                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} mode="mapping" />}
                   <details className="rounded-lg border p-3">
                     <summary>固定字段映射</summary>
                     <p className="mt-2 text-sm">{parser?.fieldMappingHint}</p>
@@ -1172,7 +1194,7 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
               {(step === "preview" || step === "confirm") && (
                 <div className="space-y-4">
                   {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
-                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} />}
+                    accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} mode="review" />}
                   {preview
                     .filter(
                       (entry) =>

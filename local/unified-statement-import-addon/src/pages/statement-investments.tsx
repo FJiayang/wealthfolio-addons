@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import type { Account, AddonContext, AssetResolutionInput } from "@wealthfolio/addon-sdk";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
 import { ImportChoice, ImportReviewTable } from "@wealthfolio/import-wizard-ui";
 import type { DraftLeg } from "../ant-fund/import-model";
-import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, isInvestmentCash, legKey, linkSavedInvestment } from "../import/investments";
+import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, investmentTreatment, legKey, linkSavedInvestment } from "../import/investments";
 import { rowKey, type Decisions, type ExistingActivity, type PreviewRow, type RowDecision } from "../import/ledger";
 import { statementReference } from "./statement-presentation";
-import { StatementMappingDetails } from "./statement-mapping-details";
+import { ImportSelect } from "./import-select";
 
 interface Props {
   ctx: AddonContext;
@@ -133,43 +133,92 @@ export function StatementInvestmentReview({ ctx, preview, decisions, busy, onCha
   </div>;
 }
 
-export function StatementInvestmentFunding({ preview, decisions, accounts, activities, busy, onChange }: Props) {
+export function StatementInvestmentFunding({ preview, decisions, accounts, activities, busy, onChange, mode }: Props & { mode: "mapping" | "review" }) {
   const { formatAmount } = useAmountFormatting();
   const { formatDateTime, formatDate } = useDateFormatting();
   const investmentAccounts = accounts.filter((account) => account.accountType === "SECURITIES" && account.trackingMode === "TRANSACTIONS");
   const nodes = investmentNodes(activities, preview);
   const fundingGroups = new Map<string, PreviewRow[]>();
-  for (const entry of preview.filter((entry) => isInvestmentCash(entry.row) && !["excluded", "duplicate"].includes(entry.status))) {
+  for (const entry of preview.filter((entry) => entry.row.investmentCandidate && !["excluded", "duplicate"].includes(entry.status))) {
     const source = entry.row.source;
-    const key = JSON.stringify([source.merchant.normalize("NFKC").trim() || rowKey(entry.row), source.currency]);
+    const key = JSON.stringify([source.system, source.sourceAccount || source.accountHint, source.merchant.normalize("NFKC").trim() || rowKey(entry.row), source.currency]);
     const group = fundingGroups.get(key) ?? [];
     group.push(entry);
     fundingGroups.set(key, group);
   }
+  const accountOptions = accounts.map((account) => ({ value: account.id, label: `${account.name} · ${account.currency}` }));
   return <div className="space-y-4">
-    {[...fundingGroups].map(([key, entries]) => {
+    {[...fundingGroups].map(([groupKey, entries]) => {
       const source = entries[0].row.source;
-      const company = source.merchant || source.description;
-      const selectedAccount = decisions[rowKey(entries[0].row)]?.investmentAccountId ?? "";
-      const accountId = entries.every((entry) => (decisions[rowKey(entry.row)]?.investmentAccountId ?? "") === selectedAccount) ? selectedAccount : "";
-      const confirmed = entries.every((entry) => decisions[rowKey(entry.row)]?.confirmed);
-      const changeGroup = (patch: RowDecision) => entries.forEach((entry) => onChange(rowKey(entry.row), patch));
-      return <div key={key} className="space-y-3 rounded-lg border p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-medium">{company}</p>
-          <Badge variant="secondary">{entries.length} 笔 · {source.currency}</Badge>
-        </div>
-        <p className="text-muted-foreground text-sm">确认后，每笔流水分别创建资金转账的两侧。基金交易文件稍后导入时再生成申购或赎回。</p>
-        <ImportChoice label="资金对应的投资账户" value={accountId}
-          options={investmentAccounts.filter((account) => account.currency === source.currency && entries.every((entry) => account.id !== entry.accountId)).map((account) => ({ value: account.id, label: account.name }))}
-          disabled={busy} onChange={(id) => changeGroup({ investmentAccountId: id, confirmed: false, investmentPeerKey: undefined })} />
-        <StatementMappingDetails entries={entries} label={`投资资金：${company} · ${source.currency}`} open={!confirmed}
-          accounts={accounts.map((account) => ({ value: account.id, label: account.name }))} />
-        <div className="flex items-center gap-2 text-sm"><Checkbox aria-label="已核对资金方向、最终金额及投资账户" checked={confirmed} disabled={busy}
-          onCheckedChange={(checked) => changeGroup({ confirmed: checked === true })} />已核对资金方向、最终金额及投资账户</div>
+      const company = source.merchant || source.description || "未提供交易对方";
+      const groupAccounts = investmentAccounts.filter((account) => account.currency === source.currency);
+      const eligible = entries.filter((entry) => investmentTreatment(entry.row, decisions[rowKey(entry.row)] ?? {}) === "transfer");
+      const groupValue = eligible.length && eligible.every((entry) => decisions[rowKey(entry.row)]?.investmentAccountId === decisions[rowKey(eligible[0].row)]?.investmentAccountId)
+        ? decisions[rowKey(eligible[0].row)]?.investmentAccountId ?? "" : "";
+      return <div key={groupKey} className="space-y-3 rounded-lg border p-4">
+        <div className="flex flex-wrap items-center gap-2"><p className="font-medium">{company}</p>
+          <Badge variant="secondary">{entries.length} 笔 · {source.currency}</Badge></div>
+        {mode === "mapping" && entries.length > 1 && <div className="space-y-1">
+          <p className="text-muted-foreground text-sm">批量设置本组全部流水的处理方式；逐笔核对后仍可修改。</p>
+          <ImportSelect label={`批量处理方式：${company}`} value="" disabled={busy}
+            options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
+            onChange={(value) => { if (value) entries.forEach((entry) => onChange(rowKey(entry.row), {
+              investmentTreatment: value as RowDecision["investmentTreatment"], kind: undefined, investmentPeerKey: undefined,
+            })); }} />
+        </div>}
+        {mode === "mapping" && eligible.length > 0 && <div className="space-y-1">
+          <p className="text-muted-foreground text-sm">批量填充投资账户；与资金账户相同的流水不会被填充，可逐笔调整。</p>
+          <ImportSelect label={`批量投资账户：${company}`} value={groupValue}
+            options={groupAccounts.map((account) => ({ value: account.id, label: account.name }))} disabled={busy}
+            onChange={(id) => eligible.filter((entry) => !id || entry.accountId !== id).forEach((entry) => onChange(rowKey(entry.row), { investmentAccountId: id, investmentPeerKey: undefined }))} />
+          <Button variant="outline" disabled={busy} onClick={() => eligible.filter((entry) => {
+            const id = decisions[rowKey(entry.row)]?.investmentAccountId;
+            return entry.status !== "error" && !!entry.accountId && ["transferIn", "transferOut"].includes(entry.kind ?? "") &&
+              groupAccounts.some((account) => account.id === id && account.id !== entry.accountId);
+          }).forEach((entry) => onChange(rowKey(entry.row), { confirmed: true }))}>批量核对本组资金流水</Button>
+        </div>}
+        {entries.map((entry) => {
+          const row = entry.row, key = rowKey(row), decision = decisions[key] ?? {};
+          const treatment = investmentTreatment(row, decision);
+          const direction = entry.kind === "transferIn" || entry.kind === "transferOut" ? entry.kind : "";
+          const investor = decision.investmentAccountId ?? "";
+          const investorOptions = groupAccounts.filter((account) => account.id !== entry.accountId).map((account) => ({ value: account.id, label: account.name }));
+          const validInvestor = investorOptions.some((account) => account.value === investor);
+          const label = `${row.source.fileName} 第 ${row.source.lineNumber} 行`;
+          const cashChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={entry.accountId} options={accountOptions} disabled={busy || mode !== "mapping"}
+            onChange={(accountId) => onChange(key, { accountId, investmentPeerKey: undefined })} />;
+          const investorChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={investor} options={investorOptions} disabled={busy || mode !== "mapping"}
+            onChange={(investmentAccountId) => onChange(key, { investmentAccountId, investmentPeerKey: undefined })} />;
+          return <div key={key} className="bg-background space-y-3 rounded-md border p-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm"><span className="font-medium">{label}</span>
+              <span>{row.source.description || row.source.txType || row.source.merchant}</span>
+              <span>{formatAmount(entry.amount, row.source.currency)} · 原始收支：{row.source.direction || "未提供"} · 状态：{row.source.status || "未提供"}</span></div>
+            {mode === "mapping" && <div className="grid gap-3 sm:grid-cols-2">
+              <div><p className="text-sm">处理方式</p><ImportSelect label={`处理方式：${label}`} value={treatment ?? ""} disabled={busy}
+                options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
+                onChange={(value) => onChange(key, { investmentTreatment: value ? value as RowDecision["investmentTreatment"] : undefined, kind: undefined, investmentPeerKey: undefined })} /></div>
+              <div><p className="text-sm">确认金额</p><Input aria-label={`确认金额：${label}`} value={entry.amount} disabled={busy} onChange={(event) => onChange(key, { amount: event.target.value })} /></div>
+            </div>}
+            {treatment === "transfer" ? <>
+              {mode === "mapping" && <div><p className="text-sm">相对于账单资金账户的方向</p><ImportSelect label={`资金方向：${label}`} value={direction} disabled={busy}
+                options={[{ value: "transferOut", label: "资金账户转出（申购）" }, { value: "transferIn", label: "资金账户转入（赎回）" }]}
+                onChange={(kind) => onChange(key, { kind: kind ? kind as "transferIn" | "transferOut" : undefined, investmentPeerKey: undefined })} /></div>}
+              <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                <div><p className="text-sm font-medium">{direction ? "转出账户" : "资金账户"}</p>{direction === "transferIn" ? investorChoice("转出账户") : cashChoice(direction ? "转出账户" : "资金账户")}</div>
+                <span aria-hidden="true" className="text-muted-foreground text-center">→</span>
+                <div><p className="text-sm font-medium">{direction ? "转入账户" : "投资账户"}</p>{direction === "transferIn" ? cashChoice("转入账户") : investorChoice(direction ? "转入账户" : "投资账户")}</div>
+              </div>
+              {(!validInvestor || !direction || !entry.accountId) && <p className="text-warning text-sm">{!direction ? "请选择资金方向。" : !entry.accountId ? "请选择资金账户。" : groupAccounts.length ? "请选择与资金账户不同的同币种投资账户。" : "没有符合条件的投资账户，请先创建同币种、按交易流水跟踪的证券账户。"}</p>}
+              {mode === "mapping" && <div className="flex items-center gap-2 text-sm"><Checkbox aria-label={`核对资金流水：${label}`} checked={!!decision.confirmed} disabled={busy || !direction || !entry.accountId || !validInvestor}
+                onCheckedChange={(checked) => onChange(key, { confirmed: checked === true })} />已核对方向、金额、账户及上述交易状态</div>}
+            </> : treatment && <div><p className="text-sm font-medium">资金账户</p>{cashChoice("资金账户")}</div>}
+            {(row.reviewReason || entry.status === "error" || entry.status === "review") && <p className="text-muted-foreground text-sm">{[row.reviewReason, entry.reason].filter((reason, index, all) => reason && all.indexOf(reason) === index).join("；")}</p>}
+            {mode === "mapping" && <Button variant="outline" disabled={busy} onClick={() => onChange(key, { excluded: true })}>跳过此笔</Button>}
+          </div>;
+        })}
       </div>;
     })}
-    {preview.filter((entry) => entry.investmentLink && entry.status !== "excluded").map((entry) => {
+    {mode === "review" && preview.filter((entry) => entry.investmentLink && entry.status !== "excluded").map((entry) => {
       const key = rowKey(entry.row), node = nodes.find((node) => node.entry === entry);
       const candidates = node && !node.metadata.investment?.peerKey ? investmentCandidates(node, nodes, false) : [];
       return <div key={key} className="bg-muted/30 space-y-3 rounded-md border p-3">

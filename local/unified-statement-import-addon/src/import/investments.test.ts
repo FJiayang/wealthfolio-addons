@@ -4,7 +4,7 @@ import { account, activity, csvRow, HEADER } from "../test-fixtures";
 import { parseStatement, parseStatementSync } from "../parsers";
 import type { StatementRow } from "../parsers/types";
 import { buildPreview, rowKey, type Decisions, type ExistingActivity } from "./ledger";
-import { cancelInvestmentLink, investmentNodes, investmentSignature, legKey, linkSavedInvestment } from "./investments";
+import { cancelInvestmentLink, investmentCashKind, investmentNodes, investmentSignature, investmentTreatment, isInvestmentCash, legKey, linkSavedInvestment } from "./investments";
 import { createSubmitter } from "./session";
 import { mappingKey } from "./account-matching";
 
@@ -59,6 +59,72 @@ function host() {
 }
 
 describe("投资资金及基金交易", () => {
+  it.each([
+    ["朝朝宝转出", "income", "收入", "transferIn"],
+    ["朝朝宝转入", "expense", "支出", "transferOut"],
+  ] as const)("招商 %s 识别为投资资金并按银行卡方向生成两侧", (description, kind, direction, expected) => {
+    const row = bank();
+    Object.assign(row.source, { description, direction, merchant: "虚构商户" });
+    row.kind = kind;
+    expect(isInvestmentCash(row)).toBe(true);
+    expect(investmentTreatment(row, {})).toBe("transfer");
+    expect(investmentCashKind(row)).toBe(expected);
+    const entry = preview([row])[0];
+    expect(entry.status).toBe("ready");
+    expect(entry.creates?.map((create) => create.activityType)).toEqual(
+      expected === "transferIn" ? ["TRANSFER_IN", "TRANSFER_OUT"] : ["TRANSFER_OUT", "TRANSFER_IN"],
+    );
+  });
+  it("朝朝宝收益仍须人工选择，其他渠道不依赖该招商专用规则", () => {
+    const row = bank();
+    Object.assign(row.source, { description: "朝朝宝转出收益", merchant: "虚构商户" });
+    expect(investmentTreatment(row, {})).toBeUndefined();
+    expect(preview([row])[0].status).toBe("review");
+    row.source.system = "alipay";
+    row.source.description = "朝朝宝转出";
+    expect(isInvestmentCash(row)).toBe(false);
+    expect(investmentTreatment(row, {})).toBeUndefined();
+  });
+  it.each(["理财收益发放", "基金现金分红", "证券账户管理费", "基金商品消费"])("%s 仅作为候选，不自动生成转账", (description) => {
+    const row = bank();
+    row.source.description = description;
+    const initial = preview([row])[0];
+    expect(initial.status).toBe("review");
+    expect(initial.creates).toBeUndefined();
+    const choice = decisions([row]);
+    choice[rowKey(row)] = { ...choice[rowKey(row)], investmentTreatment: "expense" };
+    const ordinary = preview([row], [], choice)[0];
+    expect(ordinary.status).toBe("ready");
+    expect(ordinary.creates?.map((create) => create.activityType)).toEqual(["WITHDRAWAL"]);
+  });
+  it("保留投资候选的异常状态、独立不支持原因及硬错误", () => {
+    const row = bank();
+    row.reviewReason = "交易状态需要确认";
+    const choice = decisions([row]);
+    choice[rowKey(row)].confirmed = false;
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: "交易状态需要确认" });
+    choice[rowKey(row)].confirmed = true;
+    row.unsupportedReason = "无法确认手续费金额，请核实原文件后重新导入";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: row.unsupportedReason });
+    row.unsupportedReason = undefined;
+    row.identityReason = "缺少来源账户标识";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: row.identityReason });
+    row.identityReason = undefined;
+    row.error = "金额错误"; row.parseStatus = "fatal";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "error", reason: "金额错误" });
+    row.error = undefined; row.excluded = true; row.source.status = "交易关闭";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "excluded", reason: "交易关闭" });
+  });
+  it("方向未知的投资资金必须选择方向，投资账户不能与资金账户相同", () => {
+    const row = bank();
+    row.source.description = "基金资金"; row.source.direction = ""; row.kind = undefined;
+    const choice = decisions([row]);
+    choice[rowKey(row)].investmentTreatment = "transfer";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review" });
+    choice[rowKey(row)].kind = "transferOut";
+    choice[rowKey(row)].investmentAccountId = "cash";
+    expect(preview([row], [], choice)[0]).toMatchObject({ status: "review", reason: "请确认资金转账对应的投资账户" });
+  });
   it("默认不开启投资识别，也不生成基金活动", () => {
     const row = fund();
     expect(buildPreview([row], accounts, [], {}, {})[0]).toMatchObject({
