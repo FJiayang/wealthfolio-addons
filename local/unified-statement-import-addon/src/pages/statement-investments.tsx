@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import type { Account, AddonContext, AssetResolutionInput } from "@wealthfolio/addon-sdk";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Badge, Button, Checkbox, Icons, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
 import { ImportChoice, ImportReviewTable } from "@wealthfolio/import-wizard-ui";
 import type { DraftLeg } from "../ant-fund/import-model";
 import { cancelInvestmentLink, fundRequest, investmentCandidates, investmentNodes, investmentSignature, investmentTreatment, legKey, linkSavedInvestment } from "../import/investments";
@@ -165,11 +165,14 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
       const pendingTreatment = treatments.filter((treatment) => treatment === undefined).length;
       const pendingInvestment = eligible.filter((entry) => !groupAccounts.some((account) =>
         account.id === decisions[rowKey(entry.row)]?.investmentAccountId && account.id !== entry.accountId)).length;
-      const accountIds = entries.map((entry) => decisions[rowKey(entry.row)]?.investmentAccountId || "");
+      const accountIds = eligible.map((entry) => decisions[rowKey(entry.row)]?.investmentAccountId || "");
       const assignedAccounts = new Set(accountIds.filter(Boolean));
-      const groupValue = accountIds.every((id) => id === accountIds[0]) ? accountIds[0] : "";
+      const groupValue = accountIds.length && accountIds.every((id) => id === accountIds[0]) ? accountIds[0] : "";
       const accountPlaceholder = assignedAccounts.size > 1 ? "多个投资账户" :
         assignedAccounts.size && accountIds.some((id) => !id) ? "部分未设置" : "请选择";
+      const accountDisabledReason = !eligible.length
+        ? pendingTreatment ? "请先将需要配置投资账户的流水设为投资资金转账。" : "普通收入或支出只记入资金账户，无需选择投资账户。"
+        : !groupAccounts.length ? "没有同币种、按交易流水跟踪的证券账户，请先创建投资账户。" : "";
       return <div key={groupKey} className="space-y-3 rounded-lg border p-4">
         <div className="flex flex-wrap items-center gap-2"><p className="font-medium">{company}</p>
           <Badge variant="secondary" className="gap-2"><span>{entries.length} 笔</span><span>{source.currency}</span></Badge>
@@ -282,15 +285,19 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
         </div>
         <div className="space-y-1">
           <Label>投资账户</Label>
+          {accountDisabledReason ? <TooltipProvider><Tooltip>
+            <TooltipTrigger delay={300} render={<span tabIndex={0} className="block w-full cursor-help [&_button]:pointer-events-none" aria-label={`投资账户不可选：${company}`} />}>
+              <ImportSelect label={`批量投资账户：${company}`} value="" placeholder="不可选" options={[]} disabled onChange={() => {}} />
+            </TooltipTrigger>
+            <TooltipContent>{accountDisabledReason}</TooltipContent>
+          </Tooltip></TooltipProvider> :
           <ImportSelect label={`批量投资账户：${company}`} value={groupValue} placeholder={accountPlaceholder}
             options={groupAccounts.map((account) => ({ value: account.id, label: account.name }))} disabled={busy}
-            onChange={(id) => entries.filter((entry) => !id || entry.accountId !== id).forEach((entry) => onChange(rowKey(entry.row), { investmentAccountId: id, investmentPeerKey: undefined }))} />
+            onChange={(id) => eligible.filter((entry) => !id || entry.accountId !== id).forEach((entry) => onChange(rowKey(entry.row), { investmentAccountId: id, investmentPeerKey: undefined }))} />}
         </div>
         </div>
         <p className="text-muted-foreground text-sm">批量设置后仍可逐笔调整；与资金账户相同的投资账户不会被填充。普通收入和支出只记入资金账户；投资账户仅用于投资资金转账。</p>
-        {!groupAccounts.length && <p className={eligible.length ? "text-warning text-sm" : "text-muted-foreground text-sm"}>
-          {eligible.length ? "没有同币种、按交易流水跟踪的证券账户，请先创建投资账户。" : "暂无可选投资账户；普通收支无需配置投资账户。"}
-        </p>}
+        {accountDisabledReason && <p className={eligible.length ? "text-warning text-sm" : "text-muted-foreground text-sm"}>{accountDisabledReason}</p>}
         {eligible.length > 0 && <Button variant="outline" disabled={busy} onClick={() => eligible.filter((entry) => {
             const id = decisions[rowKey(entry.row)]?.investmentAccountId;
             return entry.status !== "error" && !!entry.accountId && ["transferIn", "transferOut"].includes(entry.kind ?? "") &&
