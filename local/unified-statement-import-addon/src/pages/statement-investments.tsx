@@ -157,7 +157,86 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
         ? decisions[rowKey(eligible[0].row)]?.investmentAccountId ?? "" : "";
       return <div key={groupKey} className="space-y-3 rounded-lg border p-4">
         <div className="flex flex-wrap items-center gap-2"><p className="font-medium">{company}</p>
-          <Badge variant="secondary">{entries.length} 笔 · {source.currency}</Badge></div>
+          <Badge variant="secondary" className="gap-2"><span>{entries.length} 笔</span><span>{source.currency}</span></Badge></div>
+        <Accordion className="rounded-md border">
+          <AccordionItem value="details" className="border-0">
+            <AccordionTrigger aria-label={`查看流水明细：${company}，${source.currency}`} className="px-3 py-2 hover:no-underline">
+              <span className="flex items-center gap-2"><span>查看流水明细</span><Badge variant="secondary">{entries.length} 笔</Badge></span>
+            </AccordionTrigger>
+            <AccordionContent className="p-0">
+              <div className="max-h-[32rem] overflow-auto">
+                <Accordion multiple>
+                {entries.map((entry) => {
+                  const row = entry.row, key = rowKey(row), decision = decisions[key] ?? {};
+                  const treatment = investmentTreatment(row, decision);
+                  const direction = entry.kind === "transferIn" || entry.kind === "transferOut" ? entry.kind : "";
+                  const investor = decision.investmentAccountId ?? "";
+                  const investorOptions = groupAccounts.filter((account) => account.id !== entry.accountId).map((account) => ({ value: account.id, label: account.name }));
+                  const validInvestor = investorOptions.some((account) => account.value === investor);
+                  const label = `${row.source.fileName} 第 ${row.source.lineNumber} 行`;
+                  const cashChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={entry.accountId} options={accountOptions} disabled={busy || mode !== "mapping"}
+                    onChange={(accountId) => onChange(key, { accountId, investmentPeerKey: undefined })} />;
+                  const investorChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={investor} options={investorOptions} disabled={busy || mode !== "mapping"}
+                    onChange={(investmentAccountId) => onChange(key, { investmentAccountId, investmentPeerKey: undefined })} />;
+                  const accountName = (id: string) => accounts.find((account) => account.id === id)?.name ?? "未选择";
+                  const outgoing = direction === "transferIn" ? investor : entry.accountId;
+                  const incoming = direction === "transferIn" ? entry.accountId : investor;
+                  const treatmentLabel = treatment === "transfer" ? "投资资金转账" : treatment === "income" ? "普通收入" : treatment === "expense" ? "普通支出" : "处理方式待选择";
+                  const flowLabel = treatment === "transfer" && direction
+                    ? `资金流向：${accountName(outgoing)} 转出，${accountName(incoming)} 转入`
+                    : treatment === "transfer" ? "资金方向待选择" : treatment ? `资金账户：${accountName(entry.accountId)}` : "处理方式待选择";
+                  const flow = treatment === "transfer" && direction
+                    ? <span role="img" className="inline-flex flex-wrap items-center gap-1" aria-label={flowLabel}>
+                        <span>{accountName(outgoing)}</span><Icons.ArrowRight aria-hidden className="text-muted-foreground size-4 shrink-0 rtl:rotate-180" /><span>{accountName(incoming)}</span>
+                      </span>
+                    : flowLabel;
+                  return <AccordionItem key={key} value={key}>
+                    <AccordionTrigger aria-label={`展开流水：${label}，${row.source.description || row.source.txType || row.source.merchant || "未提供摘要"}，${formatAmount(entry.amount, row.source.currency)}，原始收支：${row.source.direction || "未提供"}，交易状态：${row.source.status || "未提供"}，${treatmentLabel}，${flowLabel}`} className="px-3 py-2 hover:no-underline">
+                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-sm font-normal">
+                        <span className="text-muted-foreground whitespace-nowrap">{row.source.date ? row.source.datePrecision === "date" ? formatDate(row.source.date) : formatDateTime(row.source.date) : row.source.originalTime}</span>
+                        <span className="min-w-32 flex-1 break-words">{row.source.description || row.source.txType || row.source.merchant || "未提供摘要"}</span>
+                        <span className="whitespace-nowrap tabular-nums">{formatAmount(entry.amount, row.source.currency)}</span>
+                        <span className="text-muted-foreground">原始收支：{row.source.direction || "未提供"}</span>
+                        <span className="text-muted-foreground">状态：{row.source.status || "未提供"}</span>
+                        <span>{treatmentLabel}</span>
+                        <span className="break-words">{flow}</span>
+                        <Badge variant={entry.status === "ready" ? "success-subtle" : "warning-subtle"}>{entry.status === "ready" ? "已就绪" : "待处理"}</Badge>
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 px-3 pt-2">
+                      <p className="text-muted-foreground break-words text-xs">{label}</p>
+                    {mode === "mapping" && <div className="grid gap-3 sm:grid-cols-2">
+                      <div><p className="text-sm">处理方式</p><ImportSelect label={`处理方式：${label}`} value={treatment ?? ""} disabled={busy}
+                        options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
+                        onChange={(value) => onChange(key, { investmentTreatment: value ? value as RowDecision["investmentTreatment"] : undefined, kind: undefined, investmentPeerKey: undefined })} /></div>
+                      <div><p className="text-sm">确认金额</p><Input aria-label={`确认金额：${label}`} value={entry.amount} disabled={busy} onChange={(event) => onChange(key, { amount: event.target.value })} /></div>
+                    </div>}
+                    {treatment === "transfer" ? <>
+                      {mode === "mapping" && <div><p className="text-sm">相对于账单资金账户的方向</p><ImportSelect label={`资金方向：${label}`} value={direction} disabled={busy}
+                        options={[{ value: "transferOut", label: "资金账户转出（申购）" }, { value: "transferIn", label: "资金账户转入（赎回）" }]}
+                        onChange={(kind) => onChange(key, { kind: kind ? kind as "transferIn" | "transferOut" : undefined, investmentPeerKey: undefined })} /></div>}
+                      <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                        <div><p className="text-sm font-medium">{direction ? "转出账户" : "资金账户"}</p>{direction === "transferIn" ? investorChoice("转出账户") : cashChoice(direction ? "转出账户" : "资金账户")}</div>
+                        <div className="text-muted-foreground justify-self-center sm:mt-5">
+                          <Icons.ArrowDown aria-hidden className="size-4 sm:hidden" />
+                          <Icons.ArrowRight aria-hidden className="hidden size-4 sm:block rtl:rotate-180" />
+                        </div>
+                        <div><p className="text-sm font-medium">{direction ? "转入账户" : "投资账户"}</p>{direction === "transferIn" ? cashChoice("转入账户") : investorChoice(direction ? "转入账户" : "投资账户")}</div>
+                      </div>
+                      {(!validInvestor || !direction || !entry.accountId) && <p className="text-warning text-sm">{!direction ? "请选择资金方向。" : !entry.accountId ? "请选择资金账户。" : groupAccounts.length ? "请选择与资金账户不同的同币种投资账户。" : "没有符合条件的投资账户，请先创建同币种、按交易流水跟踪的证券账户。"}</p>}
+                      {mode === "mapping" && <div className="flex items-center gap-2 text-sm"><Checkbox aria-label={`核对资金流水：${label}`} checked={!!decision.confirmed} disabled={busy || !direction || !entry.accountId || !validInvestor}
+                        onCheckedChange={(checked) => onChange(key, { confirmed: checked === true })} />已核对方向、金额、账户及上述交易状态</div>}
+                    </> : treatment && <div><p className="text-sm font-medium">资金账户</p>{cashChoice("资金账户")}</div>}
+                    {(row.reviewReason || entry.status === "error" || entry.status === "review") && <p className="text-muted-foreground text-sm">{[row.reviewReason, entry.reason].filter((reason, index, all) => reason && all.indexOf(reason) === index).join("；")}</p>}
+                    {mode === "mapping" && <Button variant="outline" disabled={busy} onClick={() => onChange(key, { excluded: true })}>跳过此笔</Button>}
+                    </AccordionContent>
+                  </AccordionItem>;
+                })}
+                </Accordion>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
         {mode === "mapping" && entries.length > 1 && <div className="space-y-1">
           <p className="text-muted-foreground text-sm">批量设置本组全部流水的处理方式；逐笔核对后仍可修改。</p>
           <ImportSelect label={`批量处理方式：${company}`} value="" disabled={busy}
@@ -177,45 +256,7 @@ export function StatementInvestmentFunding({ preview, decisions, accounts, activ
               groupAccounts.some((account) => account.id === id && account.id !== entry.accountId);
           }).forEach((entry) => onChange(rowKey(entry.row), { confirmed: true }))}>批量核对本组资金流水</Button>
         </div>}
-        {entries.map((entry) => {
-          const row = entry.row, key = rowKey(row), decision = decisions[key] ?? {};
-          const treatment = investmentTreatment(row, decision);
-          const direction = entry.kind === "transferIn" || entry.kind === "transferOut" ? entry.kind : "";
-          const investor = decision.investmentAccountId ?? "";
-          const investorOptions = groupAccounts.filter((account) => account.id !== entry.accountId).map((account) => ({ value: account.id, label: account.name }));
-          const validInvestor = investorOptions.some((account) => account.value === investor);
-          const label = `${row.source.fileName} 第 ${row.source.lineNumber} 行`;
-          const cashChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={entry.accountId} options={accountOptions} disabled={busy || mode !== "mapping"}
-            onChange={(accountId) => onChange(key, { accountId, investmentPeerKey: undefined })} />;
-          const investorChoice = (side: string) => <ImportSelect label={`${side}：${label}`} value={investor} options={investorOptions} disabled={busy || mode !== "mapping"}
-            onChange={(investmentAccountId) => onChange(key, { investmentAccountId, investmentPeerKey: undefined })} />;
-          return <div key={key} className="bg-background space-y-3 rounded-md border p-3">
-            <div className="flex flex-wrap items-center gap-2 text-sm"><span className="font-medium">{label}</span>
-              <span>{row.source.description || row.source.txType || row.source.merchant}</span>
-              <span>{formatAmount(entry.amount, row.source.currency)} · 原始收支：{row.source.direction || "未提供"} · 状态：{row.source.status || "未提供"}</span></div>
-            {mode === "mapping" && <div className="grid gap-3 sm:grid-cols-2">
-              <div><p className="text-sm">处理方式</p><ImportSelect label={`处理方式：${label}`} value={treatment ?? ""} disabled={busy}
-                options={[{ value: "transfer", label: "投资资金转账" }, { value: "income", label: "普通收入" }, { value: "expense", label: "普通支出" }]}
-                onChange={(value) => onChange(key, { investmentTreatment: value ? value as RowDecision["investmentTreatment"] : undefined, kind: undefined, investmentPeerKey: undefined })} /></div>
-              <div><p className="text-sm">确认金额</p><Input aria-label={`确认金额：${label}`} value={entry.amount} disabled={busy} onChange={(event) => onChange(key, { amount: event.target.value })} /></div>
-            </div>}
-            {treatment === "transfer" ? <>
-              {mode === "mapping" && <div><p className="text-sm">相对于账单资金账户的方向</p><ImportSelect label={`资金方向：${label}`} value={direction} disabled={busy}
-                options={[{ value: "transferOut", label: "资金账户转出（申购）" }, { value: "transferIn", label: "资金账户转入（赎回）" }]}
-                onChange={(kind) => onChange(key, { kind: kind ? kind as "transferIn" | "transferOut" : undefined, investmentPeerKey: undefined })} /></div>}
-              <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
-                <div><p className="text-sm font-medium">{direction ? "转出账户" : "资金账户"}</p>{direction === "transferIn" ? investorChoice("转出账户") : cashChoice(direction ? "转出账户" : "资金账户")}</div>
-                <span aria-hidden="true" className="text-muted-foreground text-center">→</span>
-                <div><p className="text-sm font-medium">{direction ? "转入账户" : "投资账户"}</p>{direction === "transferIn" ? cashChoice("转入账户") : investorChoice(direction ? "转入账户" : "投资账户")}</div>
-              </div>
-              {(!validInvestor || !direction || !entry.accountId) && <p className="text-warning text-sm">{!direction ? "请选择资金方向。" : !entry.accountId ? "请选择资金账户。" : groupAccounts.length ? "请选择与资金账户不同的同币种投资账户。" : "没有符合条件的投资账户，请先创建同币种、按交易流水跟踪的证券账户。"}</p>}
-              {mode === "mapping" && <div className="flex items-center gap-2 text-sm"><Checkbox aria-label={`核对资金流水：${label}`} checked={!!decision.confirmed} disabled={busy || !direction || !entry.accountId || !validInvestor}
-                onCheckedChange={(checked) => onChange(key, { confirmed: checked === true })} />已核对方向、金额、账户及上述交易状态</div>}
-            </> : treatment && <div><p className="text-sm font-medium">资金账户</p>{cashChoice("资金账户")}</div>}
-            {(row.reviewReason || entry.status === "error" || entry.status === "review") && <p className="text-muted-foreground text-sm">{[row.reviewReason, entry.reason].filter((reason, index, all) => reason && all.indexOf(reason) === index).join("；")}</p>}
-            {mode === "mapping" && <Button variant="outline" disabled={busy} onClick={() => onChange(key, { excluded: true })}>跳过此笔</Button>}
-          </div>;
-        })}
+
       </div>;
     })}
     {mode === "review" && preview.filter((entry) => entry.investmentLink && entry.status !== "excluded").map((entry) => {

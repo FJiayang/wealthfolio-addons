@@ -37,7 +37,7 @@ const previewColumns = [
 export const alipayParser: StatementParser = {
   previewColumns,
   categoryLabel: "支付宝分类",
-  fieldMappingHint: "交易时间／交易创建时间 → 日期；收/支 → 记账性质；金额 → 金额；收/付款方式 → 账户；订单号 → 来源标识。来源分类保留在备注中。",
+  fieldMappingHint: "交易时间／交易创建时间映射为日期；收/支映射为记账性质；金额映射为金额；收/付款方式映射为账户；订单号映射为来源标识。来源分类保留在备注中。",
   id: "alipay",
   displayName: "支付宝",
   formats: ["csv"],

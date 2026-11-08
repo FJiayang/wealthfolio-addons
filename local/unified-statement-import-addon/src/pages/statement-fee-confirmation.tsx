@@ -1,4 +1,4 @@
-import { Checkbox, Input, useAmountFormatting, useNumberFormatting } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, Checkbox, Input, useAmountFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import { rowKey, type PreviewRow, type RowDecision } from "../import/ledger";
 import { ImportSelect } from "./import-select";
 
@@ -19,11 +19,13 @@ export function StatementFeeConfirmation({
   const { formatDecimal } = useNumberFormatting();
   const source = entry.row.source;
   return (
-    <details className="space-y-2 rounded-lg border p-3">
-      <summary>
+    <Accordion keepMounted className="rounded-lg border">
+      <AccordionItem value="fee" className="border-0">
+      <AccordionTrigger className="px-3 py-3 hover:no-underline">
         手续费确认：{source.fileName} ·{" "}
         {formatDecimal(source.lineNumber, { maximumFractionDigits: 0 })}
-      </summary>
+      </AccordionTrigger>
+      <AccordionContent className="space-y-2 px-3 pb-3">
       <p>
         主流水原金额 {formatAmount(source.amount, source.currency)}，服务费{" "}
         {formatAmount(source.fee!, source.currency)}
@@ -55,6 +57,8 @@ export function StatementFeeConfirmation({
         />
         已确认主流水金额与手续费口径，分别入账
       </label>
-    </details>
+      </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }

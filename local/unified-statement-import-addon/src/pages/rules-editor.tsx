@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertFeedback, Button, Checkbox, Input } from "@wealthfolio/ui";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AlertFeedback, Button, Checkbox, Input } from "@wealthfolio/ui";
 import type { ImportRule } from "../import/rules";
 import { applyRules, validateRules } from "../import/rules";
 import type { StatementRow } from "../parsers/types";
@@ -39,8 +39,10 @@ export function RulesEditor({
     }
   }
   return (
-    <details className="space-y-3 rounded-lg border p-3">
-      <summary className="cursor-pointer font-medium">账户映射与忽略规则</summary>
+    <Accordion keepMounted className="rounded-lg border">
+      <AccordionItem value="rules" className="border-0">
+      <AccordionTrigger className="px-3 py-3 hover:no-underline">账户映射与忽略规则</AccordionTrigger>
+      <AccordionContent className="space-y-3 px-3 pb-3">
       <p className="text-muted-foreground text-sm">
         逐行决定和保存映射优先；高优先级覆盖低优先级，同级后者覆盖。忽略命中后默认跳过，可手动恢复。时间段按上海时区。
       </p>
@@ -250,6 +252,8 @@ export function RulesEditor({
           放弃规则修改
         </Button>
       </div>
-    </details>
+      </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }

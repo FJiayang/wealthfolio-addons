@@ -1,5 +1,9 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
   Badge,
   Button,
   Checkbox,
@@ -124,13 +128,16 @@ export function ImportMappingGroup({
   children: ReactNode;
 }) {
   return (
-    <details
-      open={pending || undefined}
+    <Accordion
+      keepMounted
+      defaultValue={pending ? ["mapping"] : []}
       className={`rounded-lg border ${pending ? "border-warning-subtle-border bg-warning-subtle" : "bg-muted/20"}`}
     >
-      <summary className="cursor-pointer p-4 font-medium">{title}</summary>
-      <div className="space-y-4 border-t p-4">{children}</div>
-    </details>
+      <AccordionItem value="mapping" className="border-0">
+        <AccordionTrigger className="p-4 hover:no-underline">{title}</AccordionTrigger>
+        <AccordionContent className="space-y-4 border-t p-4">{children}</AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 

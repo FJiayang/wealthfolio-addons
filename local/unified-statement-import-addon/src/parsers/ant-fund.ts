@@ -25,7 +25,7 @@ function row(transaction: FundTransaction, fileName: string, lineNumber: number,
 export const antFundParser: StatementParser = {
   id: "ant-fund", displayName: "蚂蚁基金", formats: ["pdf", "csv"],
   uploadLabel: "上传蚂蚁基金交易明细", fileHint: "蚂蚁基金文字型 PDF / 标准投资 CSV（须包含订单号）",
-  fieldMappingHint: "确认日期 → 投资日期；amount → 最终收付金额；份额、净值和手续费分别保留；转换不匹配银行扣款。",
+  fieldMappingHint: "确认日期映射为投资日期；amount 映射为最终收付金额；份额、净值和手续费分别保留；转换不匹配银行扣款。",
   mappingHint: (count) => `已读取 ${count} 个基金订单。请选择实际持有基金的投资账户，银行卡在资金流水中另行确认。`,
   recordIdLabel: "蚂蚁基金订单号",
   previewColumns: [{ field: "originalTime", label: "交易时间" }, { field: "recordId", label: "订单号" }, { field: "description", label: "用途" }, { field: "amount", label: "最终收付金额" }],

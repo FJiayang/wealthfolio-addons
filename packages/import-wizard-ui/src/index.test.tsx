@@ -10,6 +10,7 @@ import {
   ImportStatusCards,
   ImportReviewTable,
   ImportFilePreview,
+  ImportMappingGroup,
 } from ".";
 
 let container: HTMLDivElement;
@@ -31,6 +32,19 @@ const labels = {
   processing: "处理中",
   hint: "PDF",
 };
+
+it("映射分组使用宿主折叠控件并保留待处理项的默认展开状态", async () => {
+  await act(async () => root.render(<>
+    <ImportMappingGroup title="待处理" pending><span>待处理明细</span></ImportMappingGroup>
+    <ImportMappingGroup title="已处理"><span>已处理明细</span></ImportMappingGroup>
+  </>));
+  const triggers = [...container.querySelectorAll<HTMLElement>('[data-slot="accordion-trigger"]')];
+  expect(triggers.map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["true", "false"]);
+  expect(triggers.every((trigger) => !!trigger.querySelector("svg"))).toBe(true);
+  expect(container.querySelector("details")).toBeNull();
+  await act(async () => triggers[1].click());
+  expect(triggers[1].getAttribute("aria-expanded")).toBe("true");
+});
 
 it("筛选后批量跳过仅操作当前数据中的稳定 ID，操作后清除选择", async () => {
   const onSkip = vi.fn();

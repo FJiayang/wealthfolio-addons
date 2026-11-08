@@ -127,6 +127,13 @@ async function chooseKind(direction: string, kind: string) {
   );
 }
 
+async function expandInvestmentDetails() {
+  for (const trigger of [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')])
+    if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+  for (const trigger of [...container.querySelectorAll<HTMLElement>('[aria-label^="展开流水："]')])
+    if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+}
+
 describe("shared statement wizard", () => {
   it.skipIf(!process.env.STATEMENT_CMB_PDF)("本地招商 PDF 在投资映射页展示资金方向与账户", async () => {
     const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
@@ -146,7 +153,13 @@ describe("shared statement wizard", () => {
     </FormattingProvider>));
     const label = `local-cmb.pdf 第 ${target!.row.source.lineNumber} 行`;
     const find = (prefix: string) => [...container.querySelectorAll<HTMLElement>("[aria-label]")]
-      .find((element) => element.getAttribute("aria-label") === `${prefix}：${label}`);
+      .find((element) => prefix === "展开流水"
+        ? element.getAttribute("aria-label")?.startsWith(`${prefix}：${label}，`)
+        : element.getAttribute("aria-label") === `${prefix}：${label}`);
+    for (const trigger of [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')])
+      await act(async () => trigger.click());
+    expect(find("展开流水")?.textContent).toContain("朝朝宝转出");
+    await act(async () => find("展开流水")!.click());
     expect(find("处理方式")?.textContent).toBe("投资资金转账");
     expect(find("转出账户")?.textContent).toBe("请选择");
     expect(find("转入账户")?.textContent).toContain("cash");
@@ -216,6 +229,9 @@ describe("shared statement wizard", () => {
         .find((option) => option.textContent === target)!.click());
     }
     expect(fundingChoices()).toHaveLength(2);
+    const detailGroups = [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')];
+    expect(detailGroups.every((trigger) => trigger.getAttribute("aria-expanded") === "false")).toBe(true);
+    await expandInvestmentDetails();
     expect(confirmations()).toHaveLength(3);
     expect(container.querySelectorAll('[aria-label^="账户映射："]')).toHaveLength(1);
     expect(container.querySelectorAll('[aria-label^="转出账户："]')).toHaveLength(3);
@@ -252,6 +268,7 @@ describe("shared statement wizard", () => {
     await renderPage(ctx);
     await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
     await upload([csvRow({ description: "基金现金分红", direction: "收入", status: "处理中" })]);
+    await expandInvestmentDetails();
     expect(container.textContent).toContain("交易状态需要确认");
     const next = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存映射并预览"))!;
     expect(next.disabled).toBe(true);
@@ -261,6 +278,7 @@ describe("shared statement wizard", () => {
       .find((option) => option.textContent === "普通收入")!.click());
     expect(next.disabled).toBe(false);
     await click("保存映射并预览");
+    await expandInvestmentDetails();
     expect(container.textContent).toContain("交易状态需要确认");
     expect(saveMany).not.toHaveBeenCalled();
   });
@@ -272,6 +290,7 @@ describe("shared statement wizard", () => {
       csvRow({ id: "synthetic-income-1", description: "基金现金分红", direction: "收入" }),
       csvRow({ id: "synthetic-income-2", description: "基金利息", direction: "收入" }),
     ]);
+    await expandInvestmentDetails();
     const rows = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="处理方式："]')];
     expect(rows().map((row) => row.textContent)).toEqual(["请选择", "请选择"]);
     await act(async () => container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')!.click());
@@ -282,6 +301,43 @@ describe("shared statement wizard", () => {
     await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
       .find((option) => option.textContent === "普通支出")!.click());
     expect(rows().map((row) => row.textContent)).toEqual(["普通收入", "普通支出"]);
+  });
+  it("批量映射前可折叠查看流水明细，批量选择后更新流向并保留逐笔编辑", async () => {
+    const { ctx } = context(undefined, [account(), account("fund", "SECURITIES")]);
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await upload([
+      csvRow({ id: "synthetic-buy", description: "基金申购", direction: "支出", amount: "100.00" }),
+      csvRow({ id: "synthetic-sell", description: "基金赎回", direction: "收入", amount: "50.00" }),
+    ]);
+    const group = container.querySelector<HTMLElement>('[aria-label^="查看流水明细："]')!;
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelectorAll('[aria-label^="展开流水："]')).toHaveLength(0);
+    await act(async () => group.click());
+    const summaries = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="展开流水："]')];
+    expect(summaries()).toHaveLength(2);
+    expect(summaries()[0].textContent).toContain("基金申购");
+    expect(summaries()[0].textContent).toContain("100.00");
+    expect(summaries()[0].textContent).toContain("原始收支：支出");
+    expect(summaries()[0].querySelector('[aria-label="资金流向：cash 转出，未选择 转入"] svg')).not.toBeNull();
+    expect(summaries()[1].querySelector('[aria-label="资金流向：未选择 转出，cash 转入"] svg')).not.toBeNull();
+    expect(summaries()[0].querySelector('[aria-label^="资金流向："] svg')?.getAttribute("class")).toContain("rtl:rotate-180");
+    expect(summaries()[0].textContent).not.toContain("→");
+    expect(container.querySelector('[aria-label^="处理方式："]')).toBeNull();
+    await act(async () => container.querySelector<HTMLElement>('[aria-label^="批量投资账户："]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "fund")!.click());
+    expect(summaries()[0].querySelector('[aria-label="资金流向：cash 转出，fund 转入"] svg')).not.toBeNull();
+    expect(summaries()[1].querySelector('[aria-label="资金流向：fund 转出，cash 转入"] svg')).not.toBeNull();
+    await act(async () => summaries()[0].click());
+    expect(container.querySelector('[aria-label^="处理方式："]')).not.toBeNull();
+    const editor = container.querySelector('[aria-label^="处理方式："]')!.closest('[data-slot="accordion-content"]')!;
+    expect(editor.querySelector('svg[class*="sm:hidden"]')).not.toBeNull();
+    expect(editor.querySelector('svg[class*="sm:block"]')?.getAttribute("class")).toContain("rtl:rotate-180");
+    await act(async () => group.click());
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => group.click());
+    expect(summaries()[0].querySelector('[aria-label="资金流向：cash 转出，fund 转入"] svg')).not.toBeNull();
   });
   it("同一来源的等价付款方式只配置一次，其他卡尾号独立配置", async () => {
     const { ctx, stored } = context("", [account()]);
@@ -316,7 +372,7 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("需要补齐 · 2 类记账性质 / 7 笔流水");
     expect(container.querySelectorAll('[aria-label^="性质映射："]')).toHaveLength(2);
     const table = container.querySelector('[aria-label="流水明细：性质：支付宝 · 未知"]')!;
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
     for (const heading of ["来源行", "交易时间", "原始收支", "记账性质", "交易对方", "商品说明", "金额", "付款方式", "交易状态"])
       expect(table.textContent).toContain(heading);
@@ -360,7 +416,7 @@ describe("shared statement wizard", () => {
     expect(container.querySelector('[aria-label^="性质映射："]')).toBeNull();
     expect(container.textContent).toContain("异常状态待核对 · 1 类 / 6 笔流水");
     const table = container.querySelector('[aria-label="流水明细：异常状态：支付宝 · 未知业务成功"]')!;
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     const records = [...table.querySelectorAll("tbody tr")];
     expect(records).toHaveLength(6);
     records.forEach((row, index) => {
@@ -466,7 +522,7 @@ describe("shared statement wizard", () => {
     ]);
     const table = container.querySelector('[aria-label="流水明细：未提供付款方式"]')!;
     expect(table).toBeTruthy();
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
     for (let index = 0; index < 6; index++) expect(table.textContent).toContain(`待判断收款来源-${index}`);
     expect(table.textContent).not.toContain("其他账户交易");

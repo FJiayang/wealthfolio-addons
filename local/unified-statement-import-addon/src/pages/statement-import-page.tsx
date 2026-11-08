@@ -10,6 +10,10 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
   AlertFeedback,
   Button,
   Badge,
@@ -1180,10 +1184,12 @@ export function StatementImportPage({ ctx }: { ctx: AddonContext }) {
                   ))}
                   {recognizeInvestments && <StatementInvestmentFunding ctx={ctx} preview={preview} decisions={decisions}
                     accounts={accounts} activities={activities} busy={busy} onChange={changeDecision} mode="mapping" />}
-                  <details className="rounded-lg border p-3">
-                    <summary>固定字段映射</summary>
-                    <p className="mt-2 text-sm">{parser?.fieldMappingHint}</p>
-                  </details>
+                  <Accordion className="rounded-lg border">
+                    <AccordionItem value="fields" className="border-0">
+                      <AccordionTrigger className="px-3 py-3 hover:no-underline">固定字段映射</AccordionTrigger>
+                      <AccordionContent className="px-3 pb-3"><p className="text-sm">{parser?.fieldMappingHint}</p></AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                   <Button variant="outline" disabled={busy} onClick={() => void resetMappings()}>
                     {"重置映射"}
                   </Button>

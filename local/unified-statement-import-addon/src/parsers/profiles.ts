@@ -643,7 +643,7 @@ export const channelParsers: StatementParser[] = [...new Set(profiles.map((p) =>
       fileHint: `${name} · CSV / XLS / XLSX${["cmb", "cmbc", "icbc", "boc", "webank"].includes(channel) ? " / PDF" : ""}`,
       recordIdLabel: "来源编号",
       fieldMappingHint:
-        "账单日期 → 日期；金额及渠道方向 → 记账性质；来源账户／付款方式 → 实际资金账户；来源编号用于去重。",
+        "账单日期映射为日期；金额及渠道方向映射为记账性质；来源账户／付款方式映射为实际资金账户；来源编号用于去重。",
       mappingHint: (count) =>
         `已读取 ${count} 条明细。请选择实际资金账户；转账和手续费需明确确认，不会自动补建对手流水。`,
       previewColumns: [
