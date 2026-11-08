@@ -572,11 +572,9 @@ export function parseProfile(p: Profile, records: CsvRecord[], fileName: string,
     const investment = /购买理财通|基金申购|基金赎回|(?:^|\s)(?:申购|赎回)(?:$|\s)|理财(?:购买|申购|赎回)|证券买入|证券卖出|基金销售|理财有限责任公司/.test(
       `${source.txType || source.description} ${source.merchant}`,
     );
-    const unsupportedReason = investment
-      ? "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。"
-      : source.remark.includes("服务费") && !source.fee
-        ? "无法确认手续费金额，请核实原文件后重新导入"
-        : undefined;
+    const unsupportedReason = source.remark.includes("服务费") && !source.fee
+      ? "无法确认手续费金额，请核实原文件后重新导入"
+      : investment ? "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。" : undefined;
     if (investment) softSkip = true;
     const excluded = ["交易关闭", "已关闭", "已撤销"].includes(source.status);
     const identityReason = p.bank && !account ? "缺少来源账户标识，请在上传页补全" : undefined;
@@ -645,7 +643,7 @@ export const channelParsers: StatementParser[] = [...new Set(profiles.map((p) =>
       fileHint: `${name} · CSV / XLS / XLSX${["cmb", "cmbc", "icbc", "boc", "webank"].includes(channel) ? " / PDF" : ""}`,
       recordIdLabel: "来源编号",
       fieldMappingHint:
-        "账单日期 → 日期；金额及渠道方向 → 记账性质；来源账户／付款方式 → 实际资金账户；来源编号用于去重。",
+        "账单日期映射为日期；金额及渠道方向映射为记账性质；来源账户／付款方式映射为实际资金账户；来源编号用于去重。",
       mappingHint: (count) =>
         `已读取 ${count} 条明细。请选择实际资金账户；转账和手续费需明确确认，不会自动补建对手流水。`,
       previewColumns: [

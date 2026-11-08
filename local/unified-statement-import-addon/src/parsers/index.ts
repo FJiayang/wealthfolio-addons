@@ -134,6 +134,58 @@ export async function parseStatement(
   }
   if (!rows.length) throw new Error("未识别到支持的账单表头或交易明细，请检查文件格式及必需列。");
   if (channels.size !== 1) throw new Error("工作簿包含不同渠道，请分别选择工作表导入。");
+  // A content fingerprint identifies a group, not an occurrence. Split only
+  // when the source provides a continuous balance chain in one file order.
+  const compositeGroups = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const source = row.source;
+    if (!source.compositeIdentity || !source.sourceAccount) return;
+    const key = JSON.stringify([source.system, source.sourceAccount, source.currency, source.recordId]);
+    compositeGroups.set(key, [...(compositeGroups.get(key) ?? []), index]);
+  });
+  let documentDigest: string | undefined;
+  if (compositeGroups.size) {
+    const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+    documentDigest = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    for (const indices of compositeGroups.values()) for (const index of indices)
+      rows[index].source.statementDigest = documentDigest;
+  }
+  for (const indices of compositeGroups.values()) {
+    if (indices.length < 2) continue;
+    const first = rows[indices[0]].source;
+    let forward = true, reverse = true;
+    const coherentSign = (row: StatementDocument["rows"][number]) => {
+      const signed = row.source.signedAmount;
+      if (!signed || !row.kind) return false;
+      const sign = compare(signed, "0");
+      return ["income", "refund", "transferIn"].includes(row.kind) ? sign > 0 :
+        ["expense", "transferOut"].includes(row.kind) ? sign < 0 : false;
+    };
+    const span = rows.slice(indices[0], indices[indices.length - 1] + 1);
+    if (span.some((row) => !row.source.sourceAccount || !row.source.currency || row.source.sheetName !== first.sheetName)) continue;
+    const accountRows = span.filter((row) => row.source.system === first.system && row.source.sourceAccount === first.sourceAccount &&
+      row.source.currency === first.currency);
+    for (let index = 1; index < accountRows.length; index++) {
+      const previous = accountRows[index - 1], current = accountRows[index];
+      const a = previous.source, b = current.source;
+      if (previous.error || current.error || previous.excluded || current.excluded ||
+          !a.balance || !b.balance || !a.signedAmount || !b.signedAmount) { forward = false; reverse = false; break; }
+      try {
+        if (!coherentSign(previous) || !coherentSign(current)) { forward = false; reverse = false; break; }
+        forward = forward && compare(add(a.balance, b.signedAmount), b.balance) === 0;
+        reverse = reverse && compare(add(b.balance, a.signedAmount), a.balance) === 0;
+      } catch { forward = false; reverse = false; }
+      if (!forward && !reverse) break;
+    }
+    if (!forward && !reverse) continue;
+    indices.forEach((index, occurrence) => {
+      const source = rows[index].source;
+      source.compositeBaseId = source.recordId;
+      source.compositeDocumentDigest = documentDigest;
+      source.compositeOccurrence = occurrence + 1;
+      source.recordId = `composite-occ:${source.compositeBaseId.slice("composite:".length)}:${documentDigest}:${occurrence + 1}`;
+    });
+  }
   for (const sheet of rawPreview) {
     const sheetRows = rows.filter((row) => row.source.sheetName === sheet.name);
     const currencies = [...new Set(sheetRows.map((row) => row.source.currency))];

@@ -37,7 +37,7 @@ const previewColumns = [
 export const alipayParser: StatementParser = {
   previewColumns,
   categoryLabel: "支付宝分类",
-  fieldMappingHint: "交易时间／交易创建时间 → 日期；收/支 → 记账性质；金额 → 金额；收/付款方式 → 账户；订单号 → 来源标识。来源分类保留在备注中。",
+  fieldMappingHint: "交易时间／交易创建时间映射为日期；收/支映射为记账性质；金额映射为金额；收/付款方式映射为账户；订单号映射为来源标识。来源分类保留在备注中。",
   id: "alipay",
   displayName: "支付宝",
   formats: ["csv"],
@@ -81,7 +81,7 @@ export const alipayParser: StatementParser = {
       if (!excluded && kind !== "refund" && !successfulStatuses.has(status))
         reviewReason = "交易状态需要确认";
       const transfer = direction === "不计收支" && kind !== "refund" && /转入|转出|转账|还款|充值|提现/.test(get(web ? "商品名称" : "商品说明"));
-      if (transfer) reviewReason = "请确认实际转入／转出账户与金额";
+      if (transfer) reviewReason = [reviewReason, "请确认实际转入／转出账户与金额"].filter(Boolean).join("；");
       const unsupportedReason = direction === "不计收支" && /-买入|-卖出|基金申购|基金赎回/.test(get(web ? "商品名称" : "商品说明")) ? "请返回上传步骤，勾选‘识别投资交易流水’后重新读取文件。" : undefined;
       let amount = get(web ? "金额（元）" : "金额");
       let date = "";

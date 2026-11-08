@@ -6,12 +6,14 @@ export function ImportSelect({
   options,
   onChange,
   disabled,
+  placeholder = "请选择",
 }: {
   label: string;
   value: string;
   options: { value: string; label: string }[];
   onChange(value: string): void;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   return (
     <Select
@@ -21,11 +23,11 @@ export function ImportSelect({
     >
       <SelectTrigger aria-label={label} className="w-full min-w-0">
         <SelectValue>
-          {options.find((option) => option.value === value)?.label ?? "请选择"}
+          {options.find((option) => option.value === value)?.label ?? placeholder}
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">请选择</SelectItem>
+        <SelectItem value="__none__">{placeholder}</SelectItem>
         {options.map((option) => (
           <SelectItem key={option.value} value={option.value}>
             {option.label}

@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@tanstack/table-core": "8.21.3",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@wealthfolio/ui": "link:../../../wealthfolio/packages/ui",

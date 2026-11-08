@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type {
   Account,
@@ -11,9 +11,16 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatementImportPage } from "./statement-import-page";
 import { account, activity, csvRow, HEADER } from "../test-fixtures";
-import { MAPPING_KEY, MAPPING_V2_KEY } from "../import/ledger";
+import { MAPPING_KEY, MAPPING_V2_KEY, type Decisions } from "../import/ledger";
 import { mappingKey } from "../import/account-matching";
 import { RULES_KEY } from "../import/rules";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { getStatementParser, parseStatement } from "../parsers";
+import { statementReference } from "./statement-presentation";
+import { buildPreview, rowKey } from "../import/ledger";
+import { StatementInvestmentFunding } from "./statement-investments";
 const scoped = (method: string) => mappingKey({ system: "alipay", accountHint: "", paymentMethod: method });
 import { FormattingProvider } from "@wealthfolio/ui";
 let container: HTMLDivElement;
@@ -121,7 +128,91 @@ async function chooseKind(direction: string, kind: string) {
   );
 }
 
+async function expandInvestmentDetails() {
+  for (const trigger of [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')])
+    if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+  for (const trigger of [...container.querySelectorAll<HTMLElement>('button[aria-label^="流水明细："]')])
+    if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+}
+
 describe("shared statement wizard", () => {
+  it.skipIf(!process.env.STATEMENT_CMB_PDF)("本地招商 PDF 在投资映射页展示资金方向与账户", async () => {
+    const pdfRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+    const document = await parseStatement(new Uint8Array(readFileSync(process.env.STATEMENT_CMB_PDF!)), "local-cmb.pdf", {
+      sourceAccount: "local-demo-source", assets: {
+        getBlob: async (path) => new Blob([readFileSync(join(pdfRoot, path.replace(/^dist\/assets\/pdf\//, "")))]),
+      },
+    });
+    const accounts = [account(), account("fund", "SECURITIES")];
+    const mappings = Object.fromEntries(document.rows.map((row) => [mappingKey(row.source), "cash"]));
+    const preview = buildPreview(document.rows, accounts, [], mappings, {}, [], { recognizeInvestments: true });
+    const target = preview.find((entry) => /朝朝宝\s*转出/.test(entry.row.source.description));
+    expect(Boolean(target)).toBe(true);
+    const { ctx } = context("", accounts);
+    function RealFunding() {
+      const [decisions, setDecisions] = useState<Decisions>({});
+      const current = buildPreview(document.rows, accounts, [], mappings, decisions, [], { recognizeInvestments: true });
+      return <StatementInvestmentFunding ctx={ctx} preview={current} decisions={decisions} accounts={accounts} activities={[]} busy={false}
+        onChange={(key, patch) => setDecisions((previous) => ({ ...previous, [key]: { ...previous[key], ...patch } }))} mode="mapping" />;
+    }
+    await act(async () => root.render(<FormattingProvider locale="zh-CN" uiLocale="zh" timezone="Asia/Shanghai">
+      <RealFunding />
+    </FormattingProvider>));
+    const label = `local-cmb.pdf 第 ${target!.row.source.lineNumber} 行`;
+    const find = (prefix: string) => [...container.querySelectorAll<HTMLElement>("[aria-label]")]
+      .find((element) => element.getAttribute("aria-label") === `${prefix}：${label}`);
+    for (const trigger of [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')])
+      await act(async () => trigger.click());
+    const targetRow = find("流水明细")?.closest("tr");
+    expect(Boolean(targetRow)).toBe(true);
+    const fields = getStatementParser(target!.row.source.system).previewColumns;
+    expect([...targetRow!.closest("table")!.querySelectorAll("thead th")].slice(1, fields.length + 1).map((cell) => cell.textContent))
+      .toEqual(fields.map((column) => column.label));
+    const cells = [...targetRow!.querySelectorAll("td")];
+    expect(fields.every((column, index) => cells[index + 1].textContent === (column.field === "recordId"
+      ? statementReference(target!.row.source) : String(target!.row.source[column.field] ?? "")))).toBe(true);
+    await act(async () => find("流水明细")!.click());
+    expect(find("处理方式")?.textContent).toBe("投资资金转账");
+    expect(find("转出账户")?.textContent).toBe("请选择");
+    expect(find("转入账户")?.textContent).toContain("cash");
+    const batchLabel = `批量处理方式：${target!.row.source.merchant || target!.row.source.description || "未提供交易对方"}`;
+    const batch = [...container.querySelectorAll<HTMLElement>('[aria-label^="批量处理方式："]')]
+      .find((element) => element.getAttribute("aria-label") === batchLabel)!;
+    expect(Boolean(batch)).toBe(true);
+    await act(async () => batch.click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(batch.textContent).toBe("普通收入");
+    expect(find("处理方式")?.textContent).toBe("普通收入");
+    const investmentLabel = `批量投资账户：${target!.row.source.merchant || target!.row.source.description || "未提供交易对方"}`;
+    const investment = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label^="批量投资账户："]')]
+      .find((element) => element.getAttribute("aria-label") === investmentLabel)!;
+    expect(investment().disabled).toBe(true);
+    expect(investment().textContent).toBe("不可选");
+    await act(async () => batch.click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "投资资金转账")!.click());
+    expect(investment().disabled).toBe(false);
+    await act(async () => investment().click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "fund")!.click());
+    expect(investment().textContent).toBe("fund");
+    await act(async () => batch.click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通支出")!.click());
+    expect(batch.textContent).toBe("普通支出");
+    expect(investment().disabled).toBe(true);
+    expect(investment().textContent).toBe("不可选");
+    await act(async () => batch.click());
+    await act(async () => [...globalThis.document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "投资资金转账")!.click());
+    expect(investment().textContent).toBe("fund");
+    expect(find("处理方式")?.textContent).toBe("投资资金转账");
+    const mapped = buildPreview(document.rows, accounts, [], mappings,
+      { [target!.row.rowId!]: { investmentAccountId: "fund", investmentTreatment: "transfer" } }, [], { recognizeInvestments: true })
+      .find((entry) => entry.row.rowId === target!.row.rowId);
+    expect(mapped?.status).toBe("ready");
+  }, 30_000);
   it("默认关闭投资识别，不调用资产接口；开启后在同一向导校验和保存基金", async () => {
     const { ctx, saveMany } = context("", [account(), account("fund", "SECURITIES")]);
     await renderPage(ctx);
@@ -156,7 +247,7 @@ describe("shared statement wizard", () => {
     });
     expect(ctx.api.navigation.navigate).not.toHaveBeenCalled();
   });
-  it("同一基金公司的多笔银行资金只映射及确认一次，保留全部明细和独立转账", async () => {
+  it("同组资金可批量选择投资账户并逐笔覆盖，双向流水独立确认", async () => {
     const { ctx, saveMany } = context("", [{ ...account(), name: "招商银行" }, account("fund", "SECURITIES"), account("other-fund", "SECURITIES")]);
     await renderPage(ctx);
     await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
@@ -177,44 +268,273 @@ describe("shared statement wizard", () => {
       expect(container.textContent).toContain("synthetic-bank.csv");
     });
     await click("补齐映射");
-    const fundingChoices = () => [...container.querySelectorAll<HTMLElement>('[aria-label="资金对应的投资账户"]')];
-    const confirmations = () => [...container.querySelectorAll<HTMLElement>('[role="checkbox"][aria-label="已核对资金方向、最终金额及投资账户"]')];
-    async function chooseFunding(index: number, target: string) {
-      await act(async () => fundingChoices()[index].click());
+    const fundingChoices = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="批量投资账户："]')];
+    const confirmations = () => [...container.querySelectorAll<HTMLElement>('[role="checkbox"][aria-label^="核对资金流水："]')];
+    async function choose(selector: string, index: number, target: string) {
+      const trigger = [...container.querySelectorAll<HTMLElement>(selector)][index];
+      expect(trigger).toBeTruthy();
+      await act(async () => trigger.click());
       await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
         .find((option) => option.textContent === target)!.click());
     }
     expect(fundingChoices()).toHaveLength(2);
-    expect(confirmations()).toHaveLength(2);
+    expect(container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')?.textContent).toBe("投资资金转账");
+    const detailGroups = [...container.querySelectorAll<HTMLElement>('[aria-label^="查看流水明细："]')];
+    expect(detailGroups.every((trigger) => trigger.getAttribute("aria-expanded") === "false")).toBe(true);
+    await expandInvestmentDetails();
+    expect(confirmations()).toHaveLength(3);
     expect(container.querySelectorAll('[aria-label^="账户映射："]')).toHaveLength(1);
-    const details = container.querySelector('[aria-label="流水明细：投资资金：合成基金公司 · CNY"]')!;
-    expect(details.querySelectorAll("tbody tr")).toHaveLength(2);
-    expect(details.closest("details")!.open).toBe(true);
-    expect([...details.querySelectorAll("tbody tr td:nth-child(2)")].every((cell) => !cell.textContent?.includes(":"))).toBe(true);
-    expect(details.textContent).toContain("第一笔");
-    expect(details.textContent).toContain("第二笔");
-    expect(details.textContent).not.toContain("第三笔");
-    for (const [index, target] of [[0, "fund"], [1, "other-fund"]] as const) {
-      await chooseFunding(index, target);
-      await act(async () => confirmations()[index].click());
-    }
-    expect(confirmations().map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["true", "true"]);
-    expect(details.closest("details")!.open).toBe(false);
-    await chooseFunding(0, "other-fund");
-    expect(confirmations()[0].getAttribute("aria-checked")).toBe("false");
-    expect(details.closest("details")!.open).toBe(true);
-    expect(confirmations()[1].getAttribute("aria-checked")).toBe("true");
-    await chooseFunding(0, "fund");
+    expect(container.querySelectorAll('[aria-label^="转出账户："]')).toHaveLength(3);
+    expect(container.querySelectorAll('[aria-label^="转入账户："]')).toHaveLength(3);
+    expect(container.textContent).toContain("基金申购第一笔");
+    expect(container.textContent).toContain("基金赎回第二笔");
+    expect(container.querySelector<HTMLButtonElement>('button')?.tagName).toBe("BUTTON");
+    expect(container.textContent).toContain("投资账户 3 笔");
+    expect(container.textContent).not.toContain("处理方式 3 笔");
+    await choose('[aria-label^="批量投资账户："]', 0, "fund");
+    expect(container.textContent).toContain("投资账户 1 笔");
+    await choose('[aria-label^="批量投资账户："]', 1, "other-fund");
+    await click("批量核对本组资金流水");
+    expect(confirmations().map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["true", "true", "false"]);
+    await act(async () => confirmations()[2].click());
+    expect(confirmations().map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["true", "true", "true"]);
+    await choose('[aria-label^="资金方向："]', 0, "资金账户转入（赎回）");
+    expect(confirmations().map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["false", "true", "true"]);
+    await choose('[aria-label^="资金方向："]', 0, "资金账户转出（申购）");
     await act(async () => confirmations()[0].click());
+    // The redemption's outgoing account is the investment side; override only that row.
+    await choose('[aria-label^="转出账户："]', 1, "other-fund");
+    expect(confirmations().map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
+    await act(async () => confirmations()[1].click());
     await click("保存映射并预览");
     await click("提交确认");
+    const finalRows = [...container.querySelectorAll('[aria-label="拟导入活动明细"] tbody tr')];
+    expect(finalRows).toHaveLength(6);
+    expect(finalRows.map((row) => {
+      const cells = row.querySelectorAll("td");
+      return [cells[1].textContent, cells[3].textContent];
+    })).toEqual([["转出", "招商银行"], ["转入", "fund"], ["转入", "招商银行"], ["转出", "other-fund"],
+      ["转出", "招商银行"], ["转入", "other-fund"]]);
     await click("导入 3 笔");
     expect(saveMany).toHaveBeenCalledOnce();
     expect(saveMany.mock.calls[0][0].creates?.map((create) => [create.accountId, create.activityType, create.amount])).toEqual([
       ["cash", "TRANSFER_OUT", "100.00"], ["fund", "TRANSFER_IN", "100.00"],
-      ["cash", "TRANSFER_IN", "50.00"], ["fund", "TRANSFER_OUT", "50.00"],
+      ["cash", "TRANSFER_IN", "50.00"], ["other-fund", "TRANSFER_OUT", "50.00"],
       ["cash", "TRANSFER_OUT", "200.00"], ["other-fund", "TRANSFER_IN", "200.00"],
     ]);
+  });
+  it("跨账单身份歧义展示来源，并可逐组视为新流水或本次跳过", async () => {
+    const rowsText = ["账号：synthetic-card", "记账日期,货币,交易金额,联机余额,交易摘要,对手信息",
+      "2026-01-01,CNY,100.00,100.00,朝朝宝转出,合成商户",
+      "2026-01-01,CNY,-100.00,0.00,基金申购,合成基金公司",
+      "2026-01-01,CNY,100.00,100.00,朝朝宝转出,合成商户",
+      "2026-01-01,CNY,-100.00,0.00,基金申购,合成基金公司"];
+    const previous = await parseStatement(new TextEncoder().encode(rowsText.join("\n")), "old.csv");
+    const accounts = [{ ...account(), name: "招商银行" }, account("fund", "SECURITIES")];
+    const mappings = Object.fromEntries(previous.rows.map((row) => [mappingKey(row.source), "cash"]));
+    const choices = Object.fromEntries(previous.rows.map((row) => [rowKey(row), { investmentTreatment: "transfer" as const, investmentAccountId: "fund" }]));
+    const initial = buildPreview(previous.rows, accounts, [], mappings, choices, [], { recognizeInvestments: true });
+    const { ctx, stored } = context("", accounts);
+    for (const [index, create] of initial.flatMap((entry) => entry.creates ?? []).entries())
+      stored.push({ ...activity(create, `old-${index}`), sourceGroupId: create.sourceGroupId });
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await act(async () => container.querySelector<HTMLElement>('[aria-label="流水格式"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("招商银行"))!.click());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([[...rowsText,
+      "2026-01-02,CNY,1.00,1.00,普通收入,合成对方"].join("\n")], "overlap.csv")] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await vi.waitFor(async () => { await act(async () => {}); expect(container.textContent).toContain("overlap.csv"); });
+    await click("补齐映射");
+    expect(container.textContent).toContain("跨账单流水待核对 · 4 笔");
+    expect(container.textContent).toContain("old.csv");
+    expect(container.textContent).toContain("已有 2 笔");
+    await click("本组视为新流水");
+    expect(container.textContent).toContain("跨账单流水待核对 · 2 笔");
+    await click("本组本次跳过");
+    expect(container.textContent).not.toContain("跨账单流水待核对");
+  });
+  it("疑似基金收益先选择处理方式，异常状态仍须单独核对", async () => {
+    const { ctx, saveMany } = context();
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await upload([csvRow({ description: "基金现金分红", direction: "收入", status: "处理中" })]);
+    await expandInvestmentDetails();
+    expect(container.textContent).toContain("交易状态需要确认");
+    const next = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存映射并预览"))!;
+    expect(next.disabled).toBe(true);
+    expect(container.querySelector<HTMLElement>('[aria-label^="处理方式："]')!.textContent).toBe("请选择");
+    await act(async () => container.querySelector<HTMLElement>('[aria-label^="处理方式："]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(next.disabled).toBe(false);
+    await click("保存映射并预览");
+    await expandInvestmentDetails();
+    expect(container.textContent).toContain("交易状态需要确认");
+    expect(saveMany).not.toHaveBeenCalled();
+  });
+  it("同组疑似流水可批量选择处理方式并逐笔修改", async () => {
+    const { ctx } = context();
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await upload([
+      csvRow({ id: "synthetic-income-1", description: "基金现金分红", direction: "收入" }),
+      csvRow({ id: "synthetic-income-2", description: "基金利息", direction: "收入" }),
+    ]);
+    await expandInvestmentDetails();
+    const rows = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="处理方式："]')];
+    const group = () => container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')!;
+    expect(rows().map((row) => row.textContent)).toEqual(["请选择", "请选择"]);
+    expect(group().textContent).toBe("请选择");
+    await act(async () => rows()[0].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(group().textContent).toBe("部分未设置");
+    await act(async () => group().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(rows().map((row) => row.textContent)).toEqual(["普通收入", "普通收入"]);
+    expect(group().textContent).toBe("普通收入");
+    await act(async () => rows()[1].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通支出")!.click());
+    expect(rows().map((row) => row.textContent)).toEqual(["普通收入", "普通支出"]);
+    expect(group().textContent).toBe("多种处理方式");
+    await act(async () => rows()[1].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(group().textContent).toBe("普通收入");
+  });
+  it("普通收支禁用投资账户并说明原因，切回转账后恢复配置", async () => {
+    const { ctx } = context(undefined, [account(), account("fund", "SECURITIES")]);
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await upload([
+      csvRow({ id: "synthetic-income-a", description: "基金现金分红", direction: "收入" }),
+      csvRow({ id: "synthetic-income-b", description: "基金利息", direction: "收入" }),
+    ]);
+    const treatment = () => container.querySelector<HTMLElement>('[aria-label^="批量处理方式："]')!;
+    const investment = () => container.querySelector<HTMLButtonElement>('[aria-label^="批量投资账户："]')!;
+    expect(treatment()).toBeTruthy();
+    expect(investment()).toBeTruthy();
+    const configuration = treatment().closest<HTMLElement>('[aria-label="批量投资配置"]');
+    expect(configuration).not.toBeNull();
+    expect(configuration).toBe(investment().closest('[aria-label="批量投资配置"]'));
+    expect(configuration?.className).toContain("md:grid-cols-2");
+    expect(container.textContent).toContain("处理方式 2 笔");
+    expect(investment().disabled).toBe(true);
+    await act(async () => treatment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通支出")!.click());
+    expect(treatment().textContent).toBe("普通支出");
+    expect(investment()).toBeTruthy();
+    expect(investment().disabled).toBe(true);
+    expect(investment().textContent).toBe("不可选");
+    const tooltipTrigger = container.querySelector<HTMLElement>('[aria-label^="投资账户不可选："]')!;
+    expect(tooltipTrigger).not.toBeNull();
+    await act(async () => {
+      tooltipTrigger.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+    });
+    await act(async () => {
+      tooltipTrigger.dispatchEvent(new MouseEvent("mouseenter"));
+      tooltipTrigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent)
+      .toContain("普通收入或支出只记入资金账户，无需选择投资账户");
+    expect(container.textContent).toContain("普通收入或支出只记入资金账户，无需选择投资账户");
+    expect(container.textContent).toContain("处理方式已设置");
+    expect(container.textContent).toContain("普通收入和支出只记入资金账户");
+    expect(container.textContent).not.toContain("处理方式 2 笔");
+    await act(async () => treatment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "投资资金转账")!.click());
+    expect(treatment().textContent).toBe("投资资金转账");
+    expect(investment().disabled).toBe(false);
+    await act(async () => investment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "fund")!.click());
+    expect(investment().textContent).toBe("fund");
+    await act(async () => treatment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(investment().disabled).toBe(true);
+    await act(async () => treatment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "投资资金转账")!.click());
+    expect(investment().textContent).toBe("fund");
+    expect(container.textContent).not.toContain("投资账户待配置");
+    expect(container.textContent).not.toContain("待配置：处理方式");
+  });
+  it("混合用途时批量投资账户只填充投资转账流水", async () => {
+    const { ctx } = context(undefined, [account(), account("fund", "SECURITIES")]);
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    await upload([
+      csvRow({ id: "synthetic-dividend", description: "基金现金分红", direction: "收入" }),
+      csvRow({ id: "synthetic-buy", description: "基金申购", direction: "支出" }),
+    ]);
+    await expandInvestmentDetails();
+    const treatments = () => [...container.querySelectorAll<HTMLElement>('[aria-label^="处理方式："]')];
+    const investment = () => container.querySelector<HTMLButtonElement>('[aria-label^="批量投资账户："]')!;
+    await act(async () => treatments()[0].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "普通收入")!.click());
+    expect(investment().disabled).toBe(false);
+    await act(async () => investment().click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "fund")!.click());
+    expect(investment().textContent).toBe("fund");
+    await act(async () => treatments()[0].click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "投资资金转账")!.click());
+    expect(investment().textContent).toBe("部分未设置");
+  });
+  it("批量映射前可折叠查看流水明细，批量选择后更新流向并保留逐笔编辑", async () => {
+    const { ctx } = context(undefined, [account(), account("fund", "SECURITIES")]);
+    await renderPage(ctx);
+    await act(async () => container.querySelector<HTMLElement>('[role="switch"]')!.click());
+    const longDescription = `基金申购${"合成说明".repeat(30)}`;
+    await upload([
+      csvRow({ id: "synthetic-buy", description: longDescription, direction: "支出", amount: "100.00" }),
+      csvRow({ id: "synthetic-sell", description: "基金赎回", direction: "收入", amount: "50.00" }),
+    ]);
+    const group = container.querySelector<HTMLElement>('[aria-label^="查看流水明细："]')!;
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelectorAll('button[aria-label^="流水明细："]')).toHaveLength(0);
+    await act(async () => group.click());
+    const summaries = () => [...container.querySelectorAll<HTMLElement>('button[aria-label^="流水明细："]')];
+    expect(summaries()).toHaveLength(2);
+    const table = container.querySelector<HTMLTableElement>('[aria-label^="投资资金流水明细："]')!;
+    expect([...table.querySelectorAll("thead th")].slice(0, 9).map((cell) => cell.textContent))
+      .toEqual(["#", "交易时间", "交易对方", "商品说明", "收/支", "金额", "付款方式", "交易状态", "订单号"]);
+    const firstRow = () => summaries()[0].closest("tr")!;
+    const secondRow = () => summaries()[1].closest("tr")!;
+    const originalCells = [...firstRow().querySelectorAll("td")];
+    expect(originalCells.slice(1, 9).map((cell) => cell.textContent)).toEqual([
+      "2025/12/31 14:23", "虚构商户", longDescription, "支出", "100.00", "账户余额", "交易成功", "synthetic-buy",
+    ]);
+    expect(originalCells[3].className).not.toMatch(/truncate|line-clamp/);
+    expect(firstRow().querySelector('[aria-label="资金流向：cash 转出，未选择 转入"] svg')).not.toBeNull();
+    expect(secondRow().querySelector('[aria-label="资金流向：未选择 转出，cash 转入"] svg')).not.toBeNull();
+    expect(firstRow().querySelector('[aria-label^="资金流向："] svg')?.getAttribute("class")).toContain("rtl:rotate-180");
+    expect(firstRow().textContent).not.toContain("→");
+    expect(container.querySelector('[aria-label^="处理方式："]')).toBeNull();
+    await act(async () => container.querySelector<HTMLElement>('[aria-label^="批量投资账户："]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"][data-open] [role="option"]')]
+      .find((option) => option.textContent === "fund")!.click());
+    expect(firstRow().querySelector('[aria-label="资金流向：cash 转出，fund 转入"] svg')).not.toBeNull();
+    expect(secondRow().querySelector('[aria-label="资金流向：fund 转出，cash 转入"] svg')).not.toBeNull();
+    await act(async () => summaries()[0].click());
+    expect(container.querySelector('[aria-label^="处理方式："]')).not.toBeNull();
+    const editor = container.querySelector('[aria-label^="处理方式："]')!.closest("tr")!;
+    expect(editor.querySelector('svg[class*="sm:hidden"]')).not.toBeNull();
+    expect(editor.querySelector('svg[class*="sm:block"]')?.getAttribute("class")).toContain("rtl:rotate-180");
+    await act(async () => group.click());
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => group.click());
+    expect(firstRow().querySelector('[aria-label="资金流向：cash 转出，fund 转入"] svg')).not.toBeNull();
   });
   it("同一来源的等价付款方式只配置一次，其他卡尾号独立配置", async () => {
     const { ctx, stored } = context("", [account()]);
@@ -249,7 +569,7 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("需要补齐 · 2 类记账性质 / 7 笔流水");
     expect(container.querySelectorAll('[aria-label^="性质映射："]')).toHaveLength(2);
     const table = container.querySelector('[aria-label="流水明细：性质：支付宝 · 未知"]')!;
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
     for (const heading of ["来源行", "交易时间", "原始收支", "记账性质", "交易对方", "商品说明", "金额", "付款方式", "交易状态"])
       expect(table.textContent).toContain(heading);
@@ -293,7 +613,7 @@ describe("shared statement wizard", () => {
     expect(container.querySelector('[aria-label^="性质映射："]')).toBeNull();
     expect(container.textContent).toContain("异常状态待核对 · 1 类 / 6 笔流水");
     const table = container.querySelector('[aria-label="流水明细：异常状态：支付宝 · 未知业务成功"]')!;
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     const records = [...table.querySelectorAll("tbody tr")];
     expect(records).toHaveLength(6);
     records.forEach((row, index) => {
@@ -384,6 +704,42 @@ describe("shared statement wizard", () => {
     expect(container.textContent).toContain("勾选行首复选框");
     expect(container.textContent).toContain("错误不能通过核对放行");
   });
+  it("大量异常流水分页核对，第二页编辑不会改动其他页", async () => {
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1200);
+    try {
+      const { ctx, stored } = context(undefined, [account(), account("manual")]);
+      await renderPage(ctx);
+      await upload(Array.from({ length: 105 }, (_, index) => csvRow({ id: `bulk-${index}`, status: "处理中" })));
+      await click("保存映射并预览");
+      expect(container.textContent).toContain("第 1–50 条，共 105 条");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      expect(container.textContent).toContain("还有 55 笔记录需要处理");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+      const cell = container.querySelector<HTMLElement>('[role="gridcell"][data-column-id="accountId"]')!;
+      const line = Number(cell.closest('[role="row"]')!.querySelector('[data-column-id="line"]')!.textContent);
+      expect(line).toBeGreaterThanOrEqual(52);
+      await act(async () => cell.firstElementChild!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+      await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+        .find((option) => option.textContent?.includes("manual"))!.click());
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      expect(container.textContent).toContain("还有 5 笔记录需要处理");
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="下一页"]')!.click());
+      await act(async () => container.querySelector<HTMLElement>('[aria-label="选择本页全部行"]')!.click());
+      await click("标记已核对");
+      await click("提交确认");
+      await click("导入 105 笔");
+      expect(stored).toHaveLength(105);
+      expect(stored[0].accountId).toBe("cash");
+      expect(stored.findIndex((entry) => entry.accountId === "manual")).toBe(line - 2);
+      expect(stored[51].accountId).toBe("cash");
+    } finally {
+      height.mockRestore();
+      width.mockRestore();
+    }
+  }, 30_000);
   it.each(["ltr", "rtl"])("%s 缺失付款方式在映射项下展示全部六笔关联流水", async (direction) => {
     document.documentElement.dir = direction;
     const { ctx, saveMany } = context();
@@ -399,7 +755,7 @@ describe("shared statement wizard", () => {
     ]);
     const table = container.querySelector('[aria-label="流水明细：未提供付款方式"]')!;
     expect(table).toBeTruthy();
-    expect(table.closest("details")!.open).toBe(true);
+    expect(table.closest('[data-slot="accordion-item"]')?.querySelector('[data-slot="accordion-trigger"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(table.querySelectorAll("tbody tr")).toHaveLength(6);
     for (let index = 0; index < 6; index++) expect(table.textContent).toContain(`待判断收款来源-${index}`);
     expect(table.textContent).not.toContain("其他账户交易");

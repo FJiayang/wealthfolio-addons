@@ -1,4 +1,8 @@
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
   Table,
   TableHeader,
   TableHead,
@@ -30,8 +34,10 @@ export function StatementMappingDetails({
   const { formatDecimal } = useNumberFormatting();
   const n = (value: number) => formatDecimal(value, { maximumFractionDigits: 0 });
   return (
-    <details open={open} className="min-w-0 sm:col-span-2">
-      <summary className="cursor-pointer text-sm font-medium">关联流水明细</summary>
+    <Accordion keepMounted defaultValue={open ? ["details"] : []} className="min-w-0 sm:col-span-2">
+      <AccordionItem value="details" className="border-0">
+      <AccordionTrigger className="py-1 text-sm hover:no-underline">关联流水明细</AccordionTrigger>
+      <AccordionContent className="p-0">
       <div className="mt-3 max-h-80 overflow-auto rounded-lg border">
         <Table
           aria-label={`流水明细：${label}`}
@@ -119,6 +125,8 @@ export function StatementMappingDetails({
           </TableBody>
         </Table>
       </div>
-    </details>
+      </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }

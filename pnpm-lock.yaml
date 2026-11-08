@@ -256,6 +256,9 @@ importers:
 
   packages/import-wizard-ui:
     devDependencies:
+      '@tanstack/table-core':
+        specifier: 8.21.3
+        version: 8.21.3
       '@types/react':
         specifier: ^19.2.13
         version: 19.2.14
